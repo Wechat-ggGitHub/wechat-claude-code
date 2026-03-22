@@ -64,21 +64,48 @@ async function runSetup(): Promise<void> {
   mkdirSync(DATA_DIR, { recursive: true });
   const QR_PATH = join(DATA_DIR, 'qrcode.png');
 
+  // Detect platform
+  const platform = process.platform;
+  const isMacOS = platform === 'darwin';
+
   console.log('正在设置...\n');
 
-  // Loop: generate QR → open image → poll for scan → handle expiry → repeat
+  // Loop: generate QR → display → poll for scan → handle expiry → repeat
   while (true) {
     const { qrcodeUrl, qrcodeId } = await startQrLogin();
 
-    // Generate QR code as PNG image
-    const QRCode = await import('qrcode');
-    const pngData = await QRCode.toBuffer(qrcodeUrl, { type: 'png', width: 400, margin: 2 });
-    writeFileSync(QR_PATH, pngData);
+    if (isMacOS) {
+      // macOS: Generate QR code as PNG image and open it
+      const QRCode = await import('qrcode');
+      const pngData = await QRCode.toBuffer(qrcodeUrl, { type: 'png', width: 400, margin: 2 });
+      writeFileSync(QR_PATH, pngData);
 
-    // Open with system default viewer (Preview.app on macOS)
-    execSync(`open "${QR_PATH}"`);
-    console.log('已打开二维码图片，请用微信扫描：');
-    console.log(`图片路径: ${QR_PATH}\n`);
+      try {
+        execSync(`open "${QR_PATH}"`);
+        console.log('已打开二维码图片，请用微信扫描：');
+        console.log(`图片路径: ${QR_PATH}\n`);
+      } catch (err) {
+        console.log('无法打开图片，二维码链接：');
+        console.log(qrcodeUrl);
+        console.log();
+      }
+    } else {
+      // Linux/other: Display QR code in terminal
+      try {
+        const qrcodeTerminal = await import('qrcode-terminal');
+        console.log('请用微信扫描下方二维码：\n');
+        qrcodeTerminal.default.generate(qrcodeUrl, { small: true });
+        console.log();
+        console.log('二维码链接：', qrcodeUrl);
+        console.log();
+      } catch (err) {
+        // Fallback if qrcode-terminal is not available
+        console.log('无法在终端显示二维码，请访问链接：');
+        console.log(qrcodeUrl);
+        console.log();
+      }
+    }
+
     console.log('等待扫码绑定...');
 
     try {
