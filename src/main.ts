@@ -1,6 +1,6 @@
 import { createInterface } from 'node:readline';
 import process from 'node:process';
-import { execSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 import { join } from 'node:path';
 import { existsSync, mkdirSync, unlinkSync, writeFileSync } from 'node:fs';
 
@@ -16,6 +16,7 @@ import { routeCommand, type CommandContext, type CommandResult } from './command
 import { claudeQuery, type QueryOptions } from './claude/provider.js';
 import { loadConfig, saveConfig } from './config.js';
 import { logger } from './logger.js';
+import { DATA_DIR } from './constants.js';
 import { MessageType, type WeixinMessage } from './wechat/types.js';
 
 // ---------------------------------------------------------------------------
@@ -60,7 +61,6 @@ function promptUser(question: string, defaultValue?: string): Promise<string> {
 // ---------------------------------------------------------------------------
 
 async function runSetup(): Promise<void> {
-  const DATA_DIR = join(process.env.HOME!, '.wechat-claude-code');
   mkdirSync(DATA_DIR, { recursive: true });
   const QR_PATH = join(DATA_DIR, 'qrcode.png');
 
@@ -76,7 +76,7 @@ async function runSetup(): Promise<void> {
     writeFileSync(QR_PATH, pngData);
 
     // Open with system default viewer (Preview.app on macOS)
-    execSync(`open "${QR_PATH}"`);
+    spawnSync('open', [QR_PATH]);
     console.log('已打开二维码图片，请用微信扫描：');
     console.log(`图片路径: ${QR_PATH}\n`);
     console.log('等待扫码绑定...');
@@ -126,7 +126,9 @@ async function runDaemon(): Promise<void> {
   const permissionBroker = createPermissionBroker(async () => {
     try {
       await sender.sendText(account.userId ?? '', sharedCtx.lastContextToken, '⏰ 权限请求超时，已自动拒绝。');
-    } catch {}
+    } catch (err) {
+      logger.warn('Failed to send permission timeout message', { error: err instanceof Error ? err.message : String(err) });
+    }
   });
 
   // -- Wire the monitor callbacks --
@@ -382,7 +384,7 @@ async function sendToClaude(
   } catch (err) {
     const errorMsg = err instanceof Error ? err.message : String(err);
     logger.error('Error in sendToClaude', { error: errorMsg });
-    await sender.sendText(fromUserId, contextToken, `⚠️ 处理消息时出错: ${errorMsg}`);
+    await sender.sendText(fromUserId, contextToken, '❌ 处理出错，请稍后重试');
 
     // Reset state
     session.state = 'idle';

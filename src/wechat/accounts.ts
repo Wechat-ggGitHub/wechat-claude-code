@@ -17,7 +17,15 @@ export interface AccountData {
 
 const ACCOUNTS_DIR = join(homedir(), '.wechat-claude-code', 'accounts');
 
+/** Reject accountIds containing path traversal or unexpected characters. */
+function validateAccountId(accountId: string): void {
+  if (!/^[a-zA-Z0-9_-]+$/.test(accountId)) {
+    throw new Error(`Invalid accountId: "${accountId}"`);
+  }
+}
+
 function accountPath(accountId: string): string {
+  validateAccountId(accountId);
   return join(ACCOUNTS_DIR, `${accountId}.json`);
 }
 

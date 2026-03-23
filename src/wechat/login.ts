@@ -57,7 +57,7 @@ export async function waitForQrScan(qrcodeId: string): Promise<AccountData> {
   let currentQrcodeId = qrcodeId;
 
   while (true) {
-    const url = `${QR_STATUS_URL}?qrcode=${currentQrcodeId}`;
+    const url = `${QR_STATUS_URL}?qrcode=${encodeURIComponent(currentQrcodeId)}`;
 
     logger.debug('Polling QR status', { qrcodeId: currentQrcodeId });
 

@@ -1,8 +1,7 @@
 import { loadJson, saveJson } from './store.js';
 import { join } from 'path';
 import { mkdirSync } from 'fs';
-
-const DATA_DIR = process.env.WCC_DATA_DIR || join(process.env.HOME!, '.wechat-claude-code');
+import { DATA_DIR } from './constants.js';
 const SESSIONS_DIR = join(DATA_DIR, 'sessions');
 
 export type SessionState = 'idle' | 'processing' | 'waiting_permission';

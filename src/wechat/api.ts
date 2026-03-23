@@ -20,6 +20,9 @@ export class WeChatApi {
   private readonly uin: string;
 
   constructor(token: string, baseUrl: string = 'https://ilinkai.weixin.qq.com') {
+    if (!baseUrl.startsWith('https://') || !/(?:^|\.)(?:weixin\.qq\.com|wechat\.com)(\/|$)/.test(baseUrl.slice('https://'.length))) {
+      throw new Error(`Untrusted baseUrl: "${baseUrl}". Must be an https://weixin.qq.com or https://wechat.com URL.`);
+    }
     this.token = token;
     this.baseUrl = baseUrl.replace(/\/+$/, '');
     this.uin = generateUin();

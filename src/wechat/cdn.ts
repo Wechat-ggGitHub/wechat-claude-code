@@ -3,6 +3,10 @@ import { logger } from "../logger.js";
 import { CDN_BASE_URL } from "./accounts.js";
 
 export function buildCdnDownloadUrl(encryptQueryParam: string): string {
+  // Validate: only allow URL-safe characters in query param to prevent injection
+  if (!/^[A-Za-z0-9%=&+._~-]+$/.test(encryptQueryParam)) {
+    throw new Error('Invalid CDN query parameter');
+  }
   return `${CDN_BASE_URL}?${encryptQueryParam}`;
 }
 
