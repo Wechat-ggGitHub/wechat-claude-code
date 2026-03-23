@@ -435,7 +435,16 @@ async function sendToClaude(
           },
     };
 
-    const result = await claudeQuery(queryOptions);
+    let result = await claudeQuery(queryOptions);
+
+    // If resume failed (e.g. corrupted session), retry without resume
+    if (result.error && queryOptions.resume) {
+      logger.warn('Resume failed, retrying without resume', { error: result.error, sessionId: queryOptions.resume });
+      queryOptions.resume = undefined;
+      session.sdkSessionId = undefined;
+      sessionStore.save(account.accountId, session);
+      result = await claudeQuery(queryOptions);
+    }
 
     // Send result back to WeChat (show generic error to user, log details internally)
     if (result.error) {
