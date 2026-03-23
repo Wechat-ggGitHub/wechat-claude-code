@@ -22,5 +22,7 @@ export function saveJson(filePath: string, data: unknown): void {
   mkdirSync(dirname(filePath), { recursive: true });
   const raw = JSON.stringify(data, null, 2) + "\n";
   writeFileSync(filePath, raw, "utf-8");
-  chmodSync(filePath, 0o600);
+  if (process.platform !== 'win32') {
+    chmodSync(filePath, 0o600);
+  }
 }

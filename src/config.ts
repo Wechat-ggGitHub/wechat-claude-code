@@ -70,5 +70,7 @@ export function saveConfig(config: Config): void {
     lines.push(`permissionMode=${config.permissionMode}`);
   }
   writeFileSync(CONFIG_PATH, lines.join("\n") + "\n", "utf-8");
-  chmodSync(CONFIG_PATH, 0o600);
+  if (process.platform !== 'win32') {
+    chmodSync(CONFIG_PATH, 0o600);
+  }
 }
