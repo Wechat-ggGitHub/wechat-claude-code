@@ -20,6 +20,7 @@ A [Claude Code](https://claude.ai/claude-code) Skill that bridges personal WeCha
 - macOS or Linux
 - Personal WeChat account (QR code binding required)
 - [Claude Code](https://docs.anthropic.com/en/docs/claude-code) with `@anthropic-ai/claude-agent-sdk` installed
+  > **Note:** Use the **latest version** of `@anthropic-ai/claude-agent-sdk`. The SDK supports third-party API providers (e.g. OpenRouter, AWS Bedrock, custom OpenAI-compatible endpoints) — set `ANTHROPIC_BASE_URL` and `ANTHROPIC_API_KEY` accordingly.
 
 ## Installation
 
