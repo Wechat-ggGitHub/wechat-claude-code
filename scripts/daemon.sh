@@ -67,7 +67,7 @@ macos_start() {
   <key>EnvironmentVariables</key>
   <dict>
     <key>PATH</key>
-    <string>${node_bin%/*}:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin</string>
+    <string>${HOME}/.local/bin:${node_bin%/*}:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin</string>
   </dict>
 </dict>
 </plist>
@@ -175,7 +175,7 @@ ExecStart=${node_bin} ${PROJECT_DIR}/dist/main.js start
 WorkingDirectory=${PROJECT_DIR}
 Restart=always
 RestartSec=10
-Environment=PATH=${node_bin%/*}:/usr/local/bin:/usr/bin:/bin
+Environment=PATH=${HOME}/.local/bin:${node_bin%/*}:/usr/local/bin:/usr/bin:/bin
 StandardOutput=append:${DATA_DIR}/logs/stdout.log
 StandardError=append:${DATA_DIR}/logs/stderr.log
 NoNewPrivileges=true
