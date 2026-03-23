@@ -41,6 +41,16 @@ macos_start() {
 
   mkdir -p "$DATA_DIR/logs"
 
+  # Collect Anthropic/Claude env vars for plist
+  local plist_extra_env=""
+  for var in ANTHROPIC_AUTH_TOKEN ANTHROPIC_API_KEY ANTHROPIC_BASE_URL CLAUDE_API_KEY; do
+    if [ -n "${!var:-}" ]; then
+      plist_extra_env="${plist_extra_env}    <key>${var}</key>
+    <string>${!var}</string>
+"
+    fi
+  done
+
   cat > "$plist_path" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -68,7 +78,7 @@ macos_start() {
   <dict>
     <key>PATH</key>
     <string>${HOME}/.local/bin:${node_bin%/*}:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin</string>
-  </dict>
+${plist_extra_env}  </dict>
 </dict>
 </plist>
 PLIST
@@ -163,6 +173,15 @@ linux_create_service_file() {
 
   mkdir -p "$(dirname "$service_file")"
 
+  # Collect Anthropic/Claude env vars to pass through to the service
+  local extra_env=""
+  for var in ANTHROPIC_AUTH_TOKEN ANTHROPIC_API_KEY ANTHROPIC_BASE_URL CLAUDE_API_KEY; do
+    if [ -n "${!var:-}" ]; then
+      extra_env="${extra_env}Environment=${var}=${!var}
+"
+    fi
+  done
+
   cat > "$service_file" <<SERVICE
 [Unit]
 Description=WeChat Claude Code Bridge
@@ -176,7 +195,7 @@ WorkingDirectory=${PROJECT_DIR}
 Restart=always
 RestartSec=10
 Environment=PATH=${HOME}/.local/bin:${node_bin%/*}:/usr/local/bin:/usr/bin:/bin
-StandardOutput=append:${DATA_DIR}/logs/stdout.log
+${extra_env}StandardOutput=append:${DATA_DIR}/logs/stdout.log
 StandardError=append:${DATA_DIR}/logs/stderr.log
 NoNewPrivileges=true
 PrivateTmp=true
