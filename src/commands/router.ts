@@ -1,7 +1,7 @@
 import type { Session } from '../session.js';
 import { findSkill } from '../claude/skill-scanner.js';
 import { logger } from '../logger.js';
-import { handleHelp, handleClear, handleCwd, handleModel, handlePermission, handleStatus, handleSkills, handleUnknown } from './handlers.js';
+import { handleHelp, handleClear, handleCwd, handleModel, handlePermission, handleStatus, handleSkills, handleReload, handleBash, handleUnknown } from './handlers.js';
 
 export interface CommandContext {
   accountId: string;
@@ -56,6 +56,11 @@ export function routeCommand(ctx: CommandContext): CommandResult {
       return handleStatus(ctx);
     case 'skills':
       return handleSkills();
+    case 'reload':
+      return handleReload();
+    case 'bash':
+    case 'sh':
+      return handleBash(ctx, args);
     default:
       return handleUnknown(cmd, args);
   }

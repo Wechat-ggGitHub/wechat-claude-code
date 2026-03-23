@@ -1,3 +1,4 @@
+import { execSync } from 'node:child_process';
 import type { CommandContext, CommandResult } from './router.js';
 import { scanAllSkills, formatSkillList, findSkill, type SkillInfo } from '../claude/skill-scanner.js';
 
@@ -10,6 +11,8 @@ const HELP_TEXT = `可用命令：
   /permission <模式> 切换权限模式
   /status           查看当前会话状态
   /skills           列出已安装的 skill
+  /reload           重新加载 skill 列表
+  /bash <命令>      执行 bash 命令
   /<skill> [参数]   触发已安装的 skill
 
 直接输入文字即可与 Claude Code 对话`;
@@ -115,6 +118,50 @@ export function handleSkills(): CommandResult {
   }
   const lines = skills.map(s => `/${s.name} — ${s.description}`);
   return { reply: `📋 已安装的 Skill (${skills.length}):\n\n${lines.join('\n')}`, handled: true };
+}
+
+export function handleReload(): CommandResult {
+  invalidateSkillCache();
+  const skills = getSkills();
+  return {
+    reply: `✅ Skill 已重新加载 (${skills.length} 个):\n\n${skills.map(s => `/${s.name} — ${s.description}`).join('\n')}`,
+    handled: true,
+  };
+}
+
+const BASH_TIMEOUT = 30_000; // 30 seconds
+const BASH_MAX_OUTPUT = 4000; // max chars to return
+
+export function handleBash(ctx: CommandContext, args: string): CommandResult {
+  if (!args) {
+    return { reply: '用法: /bash <命令>\n例: /bash ls -la', handled: true };
+  }
+
+  const cwd = ctx.session.workingDirectory;
+  try {
+    const output = execSync(args, {
+      cwd,
+      timeout: BASH_TIMEOUT,
+      maxBuffer: 1024 * 1024,
+      encoding: 'utf-8',
+      env: { ...process.env, HOME: process.env.HOME },
+    });
+    const trimmed = output.length > BASH_MAX_OUTPUT
+      ? output.slice(0, BASH_MAX_OUTPUT) + `\n... (截断，共 ${output.length} 字符)`
+      : output;
+    return { reply: trimmed || '(无输出)', handled: true };
+  } catch (err: any) {
+    const stderr = err.stderr?.toString() || '';
+    const stdout = err.stdout?.toString() || '';
+    const combined = (stdout + '\n' + stderr).trim();
+    const trimmed = combined.length > BASH_MAX_OUTPUT
+      ? combined.slice(0, BASH_MAX_OUTPUT) + `\n... (截断)`
+      : combined;
+    return {
+      reply: `⚠️ 退出码 ${err.status ?? 'unknown'}\n${trimmed || err.message}`,
+      handled: true,
+    };
+  }
 }
 
 export function handleUnknown(cmd: string, args: string): CommandResult {
