@@ -4,6 +4,7 @@ import type {
   GetUploadUrlResp,
 } from './types.js';
 import { logger } from '../logger.js';
+import * as crypto from 'crypto';
 
 /** Generate a random uint32 and return its base64 representation. */
 function generateUin(): string {
