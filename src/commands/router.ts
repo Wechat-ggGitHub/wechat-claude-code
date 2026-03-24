@@ -18,10 +18,10 @@ export interface CommandResult {
   handled: boolean;
   claudePrompt?: string; // If set, this text should be sent to Claude
   mcpStatusRequest?: boolean; // If true, caller should fetch MCP status asynchronously
+  /** List recent sessions for user to select */
+  listSessions?: boolean;
   /** Resume a specific session by ID */
   resumeSession?: string;
-  /** Continue the most recent conversation */
-  continueRecent?: boolean;
 }
 
 /**
@@ -90,7 +90,7 @@ export function routeCommand(ctx: CommandContext): CommandResult {
     case 'compact':
       return handleCompact(ctx);
     case 'resume':
-      return handleResume(ctx);
+      return handleResume(ctx, args);
     case 'mcp':
       return handleMcp(ctx);
     default:

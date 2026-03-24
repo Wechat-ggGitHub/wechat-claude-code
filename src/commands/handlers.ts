@@ -258,33 +258,23 @@ export function handleCompact(ctx: CommandContext): CommandResult {
 }
 
 /** 恢复之前的 SDK 会话 */
-export function handleResume(ctx: CommandContext): CommandResult {
-  const previousSessionId = ctx.session.previousSdkSessionId;
-
-  if (previousSessionId) {
-    // 恢复被 /compact 压缩的会话
-    ctx.updateSession({
-      sdkSessionId: previousSessionId,
-      previousSdkSessionId: undefined,
-    });
+export function handleResume(ctx: CommandContext, args: string): CommandResult {
+  // 如果有参数，恢复指定的会话
+  if (args) {
+    const sessionId = args.trim();
+    ctx.updateSession({ sdkSessionId: sessionId });
 
     return {
-      reply: `✅ 已恢复之前的 SDK 会话\n\n` +
-             `会话 ID: ${previousSessionId.slice(0, 8)}...\n` +
-             `现在可以继续之前的对话上下文`,
+      reply: `✅ 已设置恢复指定会话\n\n` +
+             `会话 ID: ${sessionId.slice(0, 8)}...\n` +
+             `下次发消息将恢复该会话的上下文`,
       handled: true,
     };
   }
 
-  // 没有被压缩的会话，设置标志让下次消息使用 continue: true
-  ctx.updateSession({ continueRecent: true });
-
-  return {
-    reply: `✅ 已设置恢复最近会话\n\n` +
-           `下次发送消息时将恢复当前工作目录的最近对话\n` +
-           `工作目录: ${ctx.session.workingDirectory}`,
-    handled: true,
-  };
+  // 没有参数，列出最近的会话
+  // 返回特殊标志让 main.ts 异步获取会话列表
+  return { handled: true, listSessions: true };
 }
 
 /** 查看 MCP 服务器状态 */

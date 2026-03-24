@@ -1,10 +1,73 @@
 import { loadJson, saveJson } from './store.js';
-import { mkdirSync } from 'node:fs';
-import { DATA_DIR } from './constants.js';
+import { mkdirSync, existsSync, readFileSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { DATA_DIR } from './constants.js';
 import { logger } from './logger.js';
 
 const SESSIONS_DIR = join(DATA_DIR, 'sessions');
+
+// Claude Code 会话索引相关
+const CLAUDE_PROJECTS_DIR = join(homedir(), '.claude', 'projects');
+
+/** Claude Code 会话索引条目 */
+export interface ClaudeSessionEntry {
+  sessionId: string;
+  fullPath: string;
+  fileMtime: number;
+  firstPrompt: string;
+  messageCount: number;
+  created: string;
+  modified: string;
+  gitBranch: string;
+  projectPath: string;
+  isSidechain: boolean;
+}
+
+/** Claude Code 会话索引 */
+interface ClaudeSessionIndex {
+  version: number;
+  entries: ClaudeSessionEntry[];
+}
+
+/**
+ * 获取指定工作目录的最近 Claude Code 会话列表
+ * @param workingDirectory 工作目录
+ * @param limit 返回的最大会话数量
+ */
+export function listRecentSessions(workingDirectory: string, limit: number = 5): ClaudeSessionEntry[] {
+  try {
+    // 将工作目录转换为 Claude Code 的项目目录名格式
+    // 例如: D:\code2\wechat-claude-code -> D--code2-wechat-claude-code
+    const projectName = workingDirectory
+      .replace(/^[A-Za-z]:/, (match) => match.replace(':', '-').toUpperCase())
+      .replace(/[/\\]/g, '-');
+
+    const indexPath = join(CLAUDE_PROJECTS_DIR, projectName, 'sessions-index.json');
+
+    if (!existsSync(indexPath)) {
+      logger.debug('No sessions index found', { indexPath });
+      return [];
+    }
+
+    const content = readFileSync(indexPath, 'utf-8');
+    const index: ClaudeSessionIndex = JSON.parse(content);
+
+    if (!index.entries || index.entries.length === 0) {
+      return [];
+    }
+
+    // 按 modified 时间降序排序，取最近的 limit 个
+    const sorted = [...index.entries]
+      .sort((a, b) => new Date(b.modified).getTime() - new Date(a.modified).getTime())
+      .slice(0, limit);
+
+    return sorted;
+  } catch (err) {
+    logger.error('Failed to list recent sessions', { error: err instanceof Error ? err.message : String(err) });
+    return [];
+  }
+}
 
 function validateAccountId(accountId: string): void {
   if (!/^[a-zA-Z0-9_.@=-]+$/.test(accountId)) {

@@ -342,6 +342,44 @@ async function handleMessage(
       return;
     }
 
+    if (result.handled && result.listSessions) {
+      // List recent Claude Code sessions
+      const { listRecentSessions } = await import('./session.js');
+      const cwd = session.workingDirectory || config.workingDirectory;
+      const sessions = listRecentSessions(cwd, 10);
+
+      if (!sessions || sessions.length === 0) {
+        await sender.sendText(fromUserId, contextToken, '📋 最近会话列表\n\n暂无会话记录\n\n💡 在当前工作目录使用 Claude Code 后会自动保存会话');
+        return;
+      }
+
+      const lines: string[] = ['📋 最近会话列表\n'];
+      lines.push(`工作目录: ${cwd}\n`);
+
+      for (let i = 0; i < sessions.length; i++) {
+        const s = sessions[i];
+        const num = i + 1;
+        const time = new Date(s.modified).toLocaleString('zh-CN', {
+          month: '2-digit',
+          day: '2-digit',
+          hour: '2-digit',
+          minute: '2-digit',
+        });
+        // 截取标题，最多 30 字符
+        const title = s.firstPrompt.length > 30 ? s.firstPrompt.slice(0, 30) + '...' : s.firstPrompt;
+        lines.push(`${num}. ${title}`);
+        lines.push(`   ${time} · ${s.messageCount} 条消息`);
+        lines.push(`   ID: ${s.sessionId.slice(0, 8)}...`);
+        lines.push('');
+      }
+
+      lines.push('💡 使用 /resume <ID> 恢复指定会话');
+      lines.push('   例如: /resume ' + sessions[0].sessionId.slice(0, 8));
+
+      await sender.sendText(fromUserId, contextToken, lines.join('\n').trimEnd());
+      return;
+    }
+
     if (result.handled && result.claudePrompt) {
       // Fall through to send the claudePrompt to Claude
       await sendToClaude(
