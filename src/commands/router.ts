@@ -20,8 +20,8 @@ export interface CommandResult {
   mcpStatusRequest?: boolean; // If true, caller should fetch MCP status asynchronously
   /** List recent sessions for user to select */
   listSessions?: boolean;
-  /** Resume a specific session by ID */
-  resumeSession?: string;
+  /** Resume session by index (0-based) from the cached session list */
+  resumeByIndex?: number;
 }
 
 /**

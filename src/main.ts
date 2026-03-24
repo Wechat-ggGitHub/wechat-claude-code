@@ -353,6 +353,10 @@ async function handleMessage(
         return;
       }
 
+      // 保存会话列表到 session，用于序号查找
+      session.cachedSessionList = sessions;
+      sessionStore.save(account.accountId, session);
+
       const lines: string[] = ['📋 最近会话列表\n'];
       lines.push(`工作目录: ${cwd}\n`);
 
@@ -369,12 +373,58 @@ async function handleMessage(
         const title = s.firstPrompt.length > 30 ? s.firstPrompt.slice(0, 30) + '...' : s.firstPrompt;
         lines.push(`${num}. ${title}`);
         lines.push(`   ${time} · ${s.messageCount} 条消息`);
-        lines.push(`   ID: ${s.sessionId.slice(0, 8)}...`);
         lines.push('');
       }
 
-      lines.push('💡 使用 /resume <ID> 恢复指定会话');
-      lines.push('   例如: /resume ' + sessions[0].sessionId.slice(0, 8));
+      lines.push('💡 使用 /resume <序号> 恢复指定会话');
+      lines.push('   例如: /resume 1');
+
+      await sender.sendText(fromUserId, contextToken, lines.join('\n').trimEnd());
+      return;
+    }
+
+    if (result.handled && result.resumeByIndex !== undefined) {
+      // Resume session by index
+      const { listRecentSessions, getRecentMessagesFromSession } = await import('./session.js');
+      const cwd = session.workingDirectory || config.workingDirectory;
+
+      // 获取会话列表
+      const sessions = session.cachedSessionList || listRecentSessions(cwd, 10);
+
+      if (!sessions || sessions.length === 0) {
+        await sender.sendText(fromUserId, contextToken, '⚠️ 暂无可恢复的会话\n\n输入 /resume 查看会话列表');
+        return;
+      }
+
+      const index = result.resumeByIndex;
+      if (index < 0 || index >= sessions.length) {
+        await sender.sendText(fromUserId, contextToken, `⚠️ 无效的序号: ${index + 1}\n\n请输入 1-${sessions.length} 之间的序号`);
+        return;
+      }
+
+      const targetSession = sessions[index];
+      const sessionId = targetSession.sessionId;
+
+      // 设置恢复会话
+      ctx.updateSession({ sdkSessionId: sessionId });
+
+      // 获取最近几条消息
+      const recentMessages = getRecentMessagesFromSession(cwd, sessionId, 6);
+
+      const lines: string[] = ['✅ 已恢复会话\n'];
+      lines.push(`标题: ${targetSession.firstPrompt.slice(0, 30)}${targetSession.firstPrompt.length > 30 ? '...' : ''}`);
+      lines.push(`消息数: ${targetSession.messageCount} 条\nn`);
+      lines.push('--- 最近对话 ---\n');
+
+      for (const msg of recentMessages) {
+        const role = msg.role === 'user' ? '👤 用户' : '🤖 Claude';
+        const content = msg.content.length > 200 ? msg.content.slice(0, 200) + '...' : msg.content;
+        lines.push(`${role}:`);
+        lines.push(content);
+        lines.push('');
+      }
+
+      lines.push('💡 可以继续对话了');
 
       await sender.sendText(fromUserId, contextToken, lines.join('\n').trimEnd());
       return;

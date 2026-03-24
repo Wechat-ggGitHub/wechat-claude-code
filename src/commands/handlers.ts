@@ -259,17 +259,18 @@ export function handleCompact(ctx: CommandContext): CommandResult {
 
 /** 恢复之前的 SDK 会话 */
 export function handleResume(ctx: CommandContext, args: string): CommandResult {
-  // 如果有参数，恢复指定的会话
+  // 如果有参数（序号），恢复指定的会话
   if (args) {
-    const sessionId = args.trim();
-    ctx.updateSession({ sdkSessionId: sessionId });
+    const index = parseInt(args.trim(), 10);
+    if (isNaN(index) || index < 1) {
+      return {
+        reply: '⚠️ 请输入有效的序号\n\n用法: /resume 1\n输入 /resume 查看会话列表',
+        handled: true,
+      };
+    }
 
-    return {
-      reply: `✅ 已设置恢复指定会话\n\n` +
-             `会话 ID: ${sessionId.slice(0, 8)}...\n` +
-             `下次发消息将恢复该会话的上下文`,
-      handled: true,
-    };
+    // 返回特殊标志让 main.ts 根据序号恢复会话
+    return { handled: true, resumeByIndex: index - 1 }; // 转为 0-based 索引
   }
 
   // 没有参数，列出最近的会话

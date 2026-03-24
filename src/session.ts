@@ -164,6 +164,69 @@ export function listRecentSessions(workingDirectory: string, limit: number = 5):
   }
 }
 
+/**
+ * 从指定会话的 .jsonl 文件中获取最近的对话记录
+ * @param workingDirectory 工作目录
+ * @param sessionId 会话 ID
+ * @param limit 返回的最大消息数量
+ */
+export function getRecentMessagesFromSession(
+  workingDirectory: string,
+  sessionId: string,
+  limit: number = 5,
+): Array<{ role: 'user' | 'assistant'; content: string }> {
+  try {
+    const projectName = workingDirToProjectName(workingDirectory);
+    const jsonlPath = join(CLAUDE_PROJECTS_DIR, projectName, `${sessionId}.jsonl`);
+
+    if (!existsSync(jsonlPath)) {
+      logger.debug('Session file not found', { jsonlPath });
+      return [];
+    }
+
+    const content = readFileSync(jsonlPath, 'utf-8');
+    const lines = content.trim().split('\n');
+    const messages: Array<{ role: 'user' | 'assistant'; content: string }> = [];
+
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      try {
+        const entry = JSON.parse(line);
+
+        // 提取用户消息
+        if (entry.type === 'user' && entry.message?.content) {
+          const msgContent = entry.message.content;
+          if (typeof msgContent === 'string' &&
+              !msgContent.startsWith('<local-command-caveat>') &&
+              !msgContent.startsWith('<command-name>')) {
+            messages.push({ role: 'user', content: msgContent });
+          }
+        }
+
+        // 提取助手消息
+        if (entry.type === 'assistant' && entry.message?.content) {
+          const contentBlocks = entry.message.content;
+          if (Array.isArray(contentBlocks)) {
+            const textBlocks = contentBlocks.filter((b: { type: string }) => b.type === 'text');
+            if (textBlocks.length > 0) {
+              const text = textBlocks.map((b: { text: string }) => b.text).join('\n');
+              messages.push({ role: 'assistant', content: text });
+            }
+          }
+        }
+      } catch {
+        // 忽略解析错误的行
+      }
+    }
+
+    // 返回最近的消息
+    return messages.slice(-limit);
+  } catch (err) {
+    logger.error('Failed to get recent messages from session', { error: err instanceof Error ? err.message : String(err) });
+    return [];
+  }
+}
+
 function validateAccountId(accountId: string): void {
   if (!/^[a-zA-Z0-9_.@=-]+$/.test(accountId)) {
     throw new Error(`Invalid accountId: "${accountId}"`);
@@ -189,6 +252,8 @@ export interface Session {
   previousSdkSessionId?: string;
   /** 下次消息是否使用 continue: true 恢复最近的会话 */
   continueRecent?: boolean;
+  /** 保存的会话列表，用于序号查找 */
+  cachedSessionList?: ClaudeSessionEntry[];
   workingDirectory: string;
   model?: string;
   permissionMode?: 'default' | 'acceptEdits' | 'plan' | 'auto';
