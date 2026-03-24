@@ -47,7 +47,7 @@ export function createMonitor(api: WeChatApi, callbacks: MonitorCallbacks) {
           saveSyncBuf(resp.get_updates_buf);
         }
 
-        // Process messages (with deduplication)
+        // Process messages (with deduplication) - non-blocking
         const messages = resp.msgs ?? [];
         if (messages.length > 0) {
           logger.info('Received messages', { count: messages.length });
@@ -69,12 +69,12 @@ export function createMonitor(api: WeChatApi, callbacks: MonitorCallbacks) {
                 for (const id of toDelete) recentMsgIds.delete(id);
               }
             }
-            try {
-              await callbacks.onMessage(msg);
-            } catch (err) {
+            // Fire-and-forget: process message without blocking the poll loop
+            // This allows permission responses (y/n) to be received while waiting
+            callbacks.onMessage(msg).catch((err: unknown) => {
               const msg2 = err instanceof Error ? err.message : String(err);
               logger.error('Error processing message', { error: msg2, messageId: msg.message_id });
-            }
+            });
           }
         }
 
