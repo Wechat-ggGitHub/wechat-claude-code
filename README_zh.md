@@ -11,13 +11,13 @@
 - 权限审批——在微信中回复 `y`/`n` 控制工具执行
 - 斜杠命令——`/help`、`/clear`、`/model`、`/status`、`/skills`
 - 在微信中触发任意已安装的 Claude Code Skill
-- 跨平台——macOS（launchd）、Linux（systemd + nohup 回退）
+- 跨平台——Windows、macOS（launchd）、Linux（systemd + nohup 回退）
 - 会话持久化——跨消息恢复上下文
 
 ## 前置条件
 
 - Node.js >= 18
-- macOS 或 Linux
+- Windows、macOS 或 Linux
 - 个人微信账号（需扫码绑定）
 - 已安装 [Claude Code](https://docs.anthropic.com/en/docs/claude-code)（含 `@anthropic-ai/claude-agent-sdk`）
   > **注意：** 该 SDK 支持第三方 API 提供商（如 OpenRouter、AWS Bedrock、自定义 OpenAI 兼容接口）——按需设置 `ANTHROPIC_BASE_URL` 与 `ANTHROPIC_API_KEY` 即可。
@@ -53,6 +53,7 @@ npm run setup
 npm run daemon -- start
 ```
 
+- **Windows**：以后台进程方式运行，使用 PID 文件管理
 - **macOS**：注册 launchd 代理，实现开机自启和自动重启
 - **Linux**：使用 systemd 用户服务（无 systemd 时回退到 nohup）
 
@@ -107,7 +108,7 @@ npm run daemon -- logs     # 查看最近日志
 - 守护进程通过长轮询监听微信 ilink bot API 的新消息
 - 消息通过 `@anthropic-ai/claude-agent-sdk` 转发给 Claude Code
 - 回复发送回微信
-- 平台原生服务管理保持守护进程运行（macOS 使用 launchd，Linux 使用 systemd/nohup）
+- 平台原生服务管理保持守护进程运行（Windows 使用后台进程，macOS 使用 launchd，Linux 使用 systemd/nohup）
 
 ## 数据目录
 

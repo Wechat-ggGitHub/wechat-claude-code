@@ -11,13 +11,13 @@ A [Claude Code](https://claude.ai/claude-code) Skill that bridges personal WeCha
 - Permission approval — reply `y`/`n` in WeChat to approve Claude's tool use
 - Slash commands — `/help`, `/clear`, `/model`, `/status`, `/skills`
 - Launch any installed Claude Code skill from WeChat
-- Cross-platform — macOS (launchd), Linux (systemd + nohup fallback)
+- Cross-platform — Windows, macOS (launchd), Linux (systemd + nohup fallback)
 - Session persistence — resume conversations across messages
 
 ## Prerequisites
 
 - Node.js >= 18
-- macOS or Linux
+- Windows, macOS or Linux
 - Personal WeChat account (QR code binding required)
 - [Claude Code](https://docs.anthropic.com/en/docs/claude-code) with `@anthropic-ai/claude-agent-sdk` installed
   > **Note:** The SDK supports third-party API providers (e.g. OpenRouter, AWS Bedrock, custom OpenAI-compatible endpoints) — set `ANTHROPIC_BASE_URL` and `ANTHROPIC_API_KEY` accordingly.
@@ -53,6 +53,7 @@ A QR code image will open — scan it with WeChat. Then configure your working d
 npm run daemon -- start
 ```
 
+- **Windows**: runs as background process with PID file
 - **macOS**: registers a launchd agent for auto-start and auto-restart
 - **Linux**: uses systemd user service (falls back to nohup if systemd unavailable)
 
@@ -107,7 +108,7 @@ WeChat (phone) ←→ ilink bot API ←→ Node.js daemon ←→ Claude Code SDK
 - The daemon long-polls WeChat's ilink bot API for new messages
 - Messages are forwarded to Claude Code via `@anthropic-ai/claude-agent-sdk`
 - Responses are sent back to WeChat
-- Platform-native service management keeps the daemon running (launchd on macOS, systemd/nohup on Linux)
+- Platform-native service management keeps the daemon running (background process on Windows, launchd on macOS, systemd/nohup on Linux)
 
 ## Data
 
