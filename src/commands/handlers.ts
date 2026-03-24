@@ -81,7 +81,7 @@ export function handlePermission(ctx: CommandContext, args: string): CommandResu
     ];
     return { reply: lines.join('\n'), handled: true };
   }
-  const mode = args.trim().toLowerCase();
+  const mode = args.trim();
   if (!PERMISSION_MODES.includes(mode as any)) {
     return {
       reply: `未知模式: ${mode}\n可用: ${PERMISSION_MODES.join(', ')}`,
