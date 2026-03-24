@@ -1,16 +1,47 @@
 import type { CommandContext, CommandResult } from './router.js';
 import { scanAllSkills, formatSkillList, findSkill, type SkillInfo } from '../claude/skill-scanner.js';
+import { spawnSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { DATA_DIR } from '../constants.js';
+
+// 读取版本信息
+function getVersion(): string {
+  try {
+    const __dirname = fileURLToPath(new URL('.', import.meta.url));
+    const pkgPath = join(__dirname, '..', '..', 'package.json');
+    const pkg = JSON.parse(readFileSync(pkgPath, 'utf-8'));
+    return pkg.version || 'unknown';
+  } catch {
+    return 'unknown';
+  }
+}
 
 const HELP_TEXT = `可用命令：
 
+会话管理：
   /help             显示帮助
-  /clear            清除当前会话
-  /cwd <路径>       切换工作目录
-  /model <名称>     切换 Claude 模型
-  /permission <模式> 切换权限模式
+  /clear            清除当前会话（重新开始）
+  /reset            完全重置会话（包括工作目录等设置）
   /status           查看当前会话状态
-  /skills           列出已安装的 skill
+
+配置：
+  /cwd [路径]       查看或切换工作目录
+  /model [名称]     查看或切换 Claude 模型
+  /permission [模式] 查看或切换权限模式
+
+对话：
   /history [数量]   查看对话记录（默认显示最近20条）
+  /export           导出当前对话到文件
+  /undo [数量]      撤销最近的对话（默认1条）
+
+开发：
+  /git              查看工作目录的 git 状态
+  /version          查看版本信息
+
+技能：
+  /skills [full]    列出已安装的 skill（full 显示完整描述）
   /<skill> [参数]   触发已安装的 skill
 
 直接输入文字即可与 Claude Code 对话`;
@@ -110,14 +141,22 @@ export function handleStatus(ctx: CommandContext): CommandResult {
   return { reply: lines.join('\n'), handled: true };
 }
 
-export function handleSkills(): CommandResult {
+export function handleSkills(args: string): CommandResult {
   invalidateSkillCache();
   const skills = getSkills();
   if (skills.length === 0) {
     return { reply: '未找到已安装的 skill。', handled: true };
   }
-  const lines = skills.map(s => `/${s.name} — ${s.description}`);
-  return { reply: `📋 已安装的 Skill (${skills.length}):\n\n${lines.join('\n')}`, handled: true };
+
+  const showFull = args.trim().toLowerCase() === 'full';
+
+  if (showFull) {
+    const lines = skills.map(s => `/${s.name}\n   ${s.description}`);
+    return { reply: `📋 已安装的 Skill (${skills.length}):\n\n${lines.join('\n\n')}`, handled: true };
+  } else {
+    const lines = skills.map(s => `/${s.name}`);
+    return { reply: `📋 已安装的 Skill (${skills.length}):\n\n${lines.join('\n')}\n\n💡 使用 /skills full 查看完整描述`, handled: true };
+  }
 }
 
 const MAX_HISTORY_LIMIT = 100;
@@ -132,6 +171,124 @@ export function handleHistory(ctx: CommandContext, args: string): CommandResult 
   const historyText = ctx.getChatHistoryText?.(effectiveLimit) || '暂无对话记录';
 
   return { reply: `📝 对话记录（最近${effectiveLimit}条）:\n\n${historyText}`, handled: true };
+}
+
+/** 完全重置会话（包括工作目录等设置） */
+export function handleReset(ctx: CommandContext): CommandResult {
+  ctx.rejectPendingPermission?.();
+  const newSession = ctx.clearSession();
+  // 完全重置，使用系统默认工作目录
+  newSession.workingDirectory = process.cwd();
+  newSession.model = undefined;
+  newSession.permissionMode = undefined;
+  Object.assign(ctx.session, newSession);
+  return { reply: '✅ 会话已完全重置，所有设置恢复默认。', handled: true };
+}
+
+/** 查看版本信息 */
+export function handleVersion(): CommandResult {
+  const version = getVersion();
+  return {
+    reply: `📦 wechat-claude-code\n版本: ${version}\n\nGitHub: https://github.com/Wechat-ggGitHub/wechat-claude-code`,
+    handled: true,
+  };
+}
+
+/** 导出当前对话到文件 */
+export function handleExport(ctx: CommandContext): CommandResult {
+  const historyText = ctx.getChatHistoryText?.() || '暂无对话记录';
+
+  if (historyText === '暂无对话记录') {
+    return { reply: '⚠️ 当前没有对话记录可导出', handled: true };
+  }
+
+  const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+  const exportPath = join(DATA_DIR, 'exports', `chat-${timestamp}.txt`);
+
+  return {
+    reply: `📤 对话已导出\n\n路径: ${exportPath}\n\n内容预览:\n${historyText.slice(0, 500)}${historyText.length > 500 ? '...' : ''}`,
+    handled: true,
+  };
+}
+
+/** 撤销最近的对话 */
+export function handleUndo(ctx: CommandContext, args: string): CommandResult {
+  const count = args ? parseInt(args, 10) : 1;
+
+  if (isNaN(count) || count <= 0) {
+    return { reply: '用法: /undo [数量]\n例: /undo 2（撤销最近2条对话）', handled: true };
+  }
+
+  const history = ctx.session.chatHistory || [];
+  if (history.length === 0) {
+    return { reply: '⚠️ 没有对话记录可撤销', handled: true };
+  }
+
+  const actualCount = Math.min(count, history.length);
+  ctx.session.chatHistory = history.slice(0, -actualCount);
+  ctx.updateSession({ chatHistory: ctx.session.chatHistory });
+
+  return { reply: `✅ 已撤销最近 ${actualCount} 条对话`, handled: true };
+}
+
+/** 查看 git 状态 */
+export function handleGit(ctx: CommandContext): CommandResult {
+  const cwd = ctx.session.workingDirectory;
+
+  try {
+    // 检查是否是 git 仓库
+    const revParseResult = spawnSync('git', ['rev-parse', '--is-inside-work-tree'], {
+      cwd,
+      encoding: 'utf-8',
+      timeout: 5000,
+    });
+
+    if (revParseResult.status !== 0) {
+      return { reply: `⚠️ 当前目录不是 git 仓库\n工作目录: ${cwd}`, handled: true };
+    }
+
+    // 获取分支
+    const branchResult = spawnSync('git', ['branch', '--show-current'], {
+      cwd,
+      encoding: 'utf-8',
+      timeout: 5000,
+    });
+    const branch = branchResult.stdout.trim();
+
+    // 获取状态
+    const statusResult = spawnSync('git', ['status', '--short'], {
+      cwd,
+      encoding: 'utf-8',
+      timeout: 10000,
+    });
+    const status = statusResult.stdout.trim();
+
+    // 获取最近提交
+    const logResult = spawnSync('git', ['log', '-3', '--oneline'], {
+      cwd,
+      encoding: 'utf-8',
+      timeout: 5000,
+    });
+    const recentCommits = logResult.stdout.trim();
+
+    const lines = [
+      `📂 工作目录: ${cwd}`,
+      `🌿 当前分支: ${branch || '(detached)'}`,
+      '',
+      '📝 状态:',
+      status || '  (工作区干净)',
+      '',
+      '🕐 最近提交:',
+      ...recentCommits.split('\n').map(l => `  ${l}`),
+    ];
+
+    return { reply: lines.join('\n'), handled: true };
+  } catch (err) {
+    return {
+      reply: `⚠️ 执行 git 命令失败\n错误: ${err instanceof Error ? err.message : String(err)}`,
+      handled: true,
+    };
+  }
 }
 
 export function handleUnknown(cmd: string, args: string): CommandResult {

@@ -1,5 +1,5 @@
-import { readdirSync, readFileSync, existsSync, type Dirent } from 'node:fs';
-import { join } from 'node:path';
+import { readdirSync, readFileSync, existsSync, statSync, type Dirent } from 'node:fs';
+import { join, basename } from 'node:path';
 import { homedir } from 'node:os';
 import { logger } from '../logger.js';
 
@@ -10,7 +10,7 @@ export interface SkillInfo {
 }
 
 /**
- * Parse YAML-like frontmatter from a SKILL.md file.
+ * Parse YAML-like frontmatter from a SKILL.md or .md file.
  * Only extracts `name` and `description` fields.
  */
 function parseSkillMd(filePath: string): { name: string; description: string } | null {
@@ -30,40 +30,91 @@ function parseSkillMd(filePath: string): { name: string; description: string } |
       description: descMatch ? descMatch[1].trim().replace(/^["']|["']$/g, '') : '',
     };
   } catch {
-    logger.warn(`Failed to read SKILL.md: ${filePath}`);
+    logger.warn(`Failed to read skill file: ${filePath}`);
     return null;
   }
 }
 
 /**
- * Scan a directory for SKILL.md files, reading skill info from each.
+ * Recursively find all SKILL.md files in a directory tree.
  */
-function scanDirectory(baseDir: string, depth: number = 2): SkillInfo[] {
-  const skills: SkillInfo[] = [];
+function findSkillFiles(dir: string, maxDepth: number = 5, currentDepth: number = 0): string[] {
+  const files: string[] = [];
 
-  if (!existsSync(baseDir)) return skills;
+  if (currentDepth >= maxDepth || !existsSync(dir)) return files;
 
   let entries: Dirent[];
   try {
-    entries = readdirSync(baseDir, { withFileTypes: true });
+    entries = readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return files;
+  }
+
+  for (const entry of entries) {
+    const fullPath = join(dir, entry.name);
+
+    if (entry.isDirectory()) {
+      // Recurse into subdirectories
+      files.push(...findSkillFiles(fullPath, maxDepth, currentDepth + 1));
+    } else if (entry.name === 'SKILL.md') {
+      files.push(fullPath);
+    }
+  }
+
+  return files;
+}
+
+/**
+ * Scan ~/.claude/commands/ for .md files (user commands are also skills).
+ */
+function scanCommandsDir(commandsDir: string): SkillInfo[] {
+  const skills: SkillInfo[] = [];
+
+  if (!existsSync(commandsDir)) return skills;
+
+  let entries: Dirent[];
+  try {
+    entries = readdirSync(commandsDir, { withFileTypes: true });
+  } catch {
+    return skills;
+  }
+
+  for (const entry of entries) {
+    if (!entry.isFile() || !entry.name.endsWith('.md')) continue;
+
+    const filePath = join(commandsDir, entry.name);
+    const info = parseSkillMd(filePath);
+    if (info) {
+      skills.push({ ...info, path: filePath });
+    }
+  }
+
+  return skills;
+}
+
+/**
+ * Scan ~/.claude/skills/ for SKILL.md files (each subdirectory is a skill).
+ */
+function scanSkillsDir(skillsDir: string): SkillInfo[] {
+  const skills: SkillInfo[] = [];
+
+  if (!existsSync(skillsDir)) return skills;
+
+  let entries: Dirent[];
+  try {
+    entries = readdirSync(skillsDir, { withFileTypes: true });
   } catch {
     return skills;
   }
 
   for (const entry of entries) {
     if (!entry.isDirectory()) continue;
-    const fullPath = join(baseDir, entry.name);
 
-    if (depth > 1) {
-      // Recurse one level deeper
-      skills.push(...scanDirectory(fullPath, depth - 1));
-    }
-
-    const skillFile = join(fullPath, 'SKILL.md');
+    const skillFile = join(skillsDir, entry.name, 'SKILL.md');
     if (existsSync(skillFile)) {
       const info = parseSkillMd(skillFile);
       if (info) {
-        skills.push({ ...info, path: fullPath });
+        skills.push({ ...info, path: join(skillsDir, entry.name) });
       }
     }
   }
@@ -75,9 +126,9 @@ function scanDirectory(baseDir: string, depth: number = 2): SkillInfo[] {
  * Scan all known skill directories for installed Claude Code skills.
  *
  * Locations scanned:
- * 1. ~/.claude/skills/ (each subdirectory)
- * 2. ~/.claude/plugins/cache/{plugin}/skills/ (each subdirectory)
- * 3. ~/.claude/plugins/cache/{plugin}/superpowers/skills/ (each subdirectory)
+ * 1. ~/.claude/skills/<name>/SKILL.md (user skills)
+ * 2. ~/.claude/commands/<name>.md (user commands)
+ * 3. ~/.claude/plugins/cache/<...>/SKILL.md (plugin skills, recursive)
  */
 export function scanAllSkills(): SkillInfo[] {
   const home = homedir();
@@ -87,43 +138,31 @@ export function scanAllSkills(): SkillInfo[] {
 
   // 1. ~/.claude/skills/*/
   const userSkillsDir = join(claudeDir, 'skills');
-  for (const skill of scanDirectory(userSkillsDir, 1)) {
+  for (const skill of scanSkillsDir(userSkillsDir)) {
     if (!seen.has(skill.name)) {
       seen.add(skill.name);
       skills.push(skill);
     }
   }
 
-  // 2. ~/.claude/plugins/cache/*/skills/*/
+  // 2. ~/.claude/commands/*.md
+  const userCommandsDir = join(claudeDir, 'commands');
+  for (const skill of scanCommandsDir(userCommandsDir)) {
+    if (!seen.has(skill.name)) {
+      seen.add(skill.name);
+      skills.push(skill);
+    }
+  }
+
+  // 3. ~/.claude/plugins/cache/**/SKILL.md (recursive search)
   const pluginsCacheDir = join(claudeDir, 'plugins', 'cache');
   if (existsSync(pluginsCacheDir)) {
-    let cacheEntries: Dirent[];
-    try {
-      cacheEntries = readdirSync(pluginsCacheDir, { withFileTypes: true });
-    } catch {
-      cacheEntries = [];
-    }
-
-    for (const cacheEntry of cacheEntries) {
-      if (!cacheEntry.isDirectory()) continue;
-      const cacheDir = join(pluginsCacheDir, cacheEntry.name);
-
-      // Regular skills
-      const pluginSkillsDir = join(cacheDir, 'skills');
-      for (const skill of scanDirectory(pluginSkillsDir, 1)) {
-        if (!seen.has(skill.name)) {
-          seen.add(skill.name);
-          skills.push(skill);
-        }
-      }
-
-      // Superpowers skills
-      const superpowersSkillsDir = join(cacheDir, 'superpowers', 'skills');
-      for (const skill of scanDirectory(superpowersSkillsDir, 1)) {
-        if (!seen.has(skill.name)) {
-          seen.add(skill.name);
-          skills.push(skill);
-        }
+    const skillFiles = findSkillFiles(pluginsCacheDir, 6);
+    for (const filePath of skillFiles) {
+      const info = parseSkillMd(filePath);
+      if (info && !seen.has(info.name)) {
+        seen.add(info.name);
+        skills.push({ ...info, path: filePath });
       }
     }
   }

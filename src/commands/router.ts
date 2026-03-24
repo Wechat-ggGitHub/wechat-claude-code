@@ -1,7 +1,7 @@
 import type { Session } from '../session.js';
 import { findSkill } from '../claude/skill-scanner.js';
 import { logger } from '../logger.js';
-import { handleHelp, handleClear, handleCwd, handleModel, handlePermission, handleStatus, handleSkills, handleHistory, handleUnknown } from './handlers.js';
+import { handleHelp, handleClear, handleCwd, handleModel, handlePermission, handleStatus, handleSkills, handleHistory, handleReset, handleVersion, handleExport, handleUndo, handleGit, handleUnknown } from './handlers.js';
 
 export interface CommandContext {
   accountId: string;
@@ -23,12 +23,20 @@ export interface CommandResult {
  * Parse and dispatch a slash command.
  *
  * Supported commands:
- *   /help     - Show help text with all available commands
- *   /clear    - Clear the current session
- *   /model <name> - Update the session model
- *   /status   - Show current session info
- *   /skills   - List all installed skills
- *   /<skill>  - Invoke a skill by name (args are forwarded to Claude)
+ *   /help             - Show help text with all available commands
+ *   /clear            - Clear the current session
+ *   /reset            - Full reset including all settings
+ *   /cwd [path]       - View or change working directory
+ *   /model [name]     - View or change Claude model
+ *   /permission [mode] - View or change permission mode
+ *   /status           - Show current session info
+ *   /skills           - List all installed skills
+ *   /history [n]      - Show chat history (default 20)
+ *   /export           - Export current chat to file
+ *   /undo [n]         - Undo recent messages (default 1)
+ *   /git              - Show git status of working directory
+ *   /version          - Show version info
+ *   /<skill>          - Invoke a skill by name (args are forwarded to Claude)
  */
 export function routeCommand(ctx: CommandContext): CommandResult {
   const text = ctx.text.trim();
@@ -48,6 +56,8 @@ export function routeCommand(ctx: CommandContext): CommandResult {
       return handleHelp(args);
     case 'clear':
       return handleClear(ctx);
+    case 'reset':
+      return handleReset(ctx);
     case 'cwd':
       return handleCwd(ctx, args);
     case 'model':
@@ -57,9 +67,18 @@ export function routeCommand(ctx: CommandContext): CommandResult {
     case 'status':
       return handleStatus(ctx);
     case 'skills':
-      return handleSkills();
+      return handleSkills(args);
     case 'history':
       return handleHistory(ctx, args);
+    case 'export':
+      return handleExport(ctx);
+    case 'undo':
+      return handleUndo(ctx, args);
+    case 'git':
+      return handleGit(ctx);
+    case 'version':
+    case 'v':
+      return handleVersion();
     default:
       return handleUnknown(cmd, args);
   }
