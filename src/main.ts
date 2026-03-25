@@ -241,15 +241,19 @@ async function handleMessage(
   const userText = extractTextFromItems(msg.item_list);
   const imageItem = extractFirstImageUrl(msg.item_list);
 
-  // Concurrency guard: reject normal messages and /clear while processing
+  // Concurrency guard: reject normal messages while processing, but allow /clear to force-reset
   if (session.state === 'processing') {
     if (userText.startsWith('/clear')) {
-      await sender.sendText(fromUserId, contextToken, '⏳ 正在处理上一条消息，请稍后再清除会话');
+      // Force reset stuck session state
+      session.state = 'idle';
+      sessionStore.save(account.accountId, session);
+      // Fall through to command routing so /clear executes normally
     } else if (!userText.startsWith('/')) {
       await sender.sendText(fromUserId, contextToken, '⏳ 正在处理上一条消息，请稍后...');
+      return;
+    } else if (!userText.startsWith('/status') && !userText.startsWith('/help')) {
+      return;
     }
-    // Allow /status and /help during processing (read-only)
-    if (!userText.startsWith('/status') && !userText.startsWith('/help')) return;
   }
 
   // -- Grace period: catch late y/n after timeout --
@@ -411,13 +415,24 @@ async function sendToClaude(
     // Map 'auto' to the SDK's underlying mode (use acceptEdits as base, but we override canUseTool)
     const sdkPermissionMode = isAutoPermission ? 'acceptEdits' : effectivePermissionMode;
 
+    // Track which text chunks have already been sent via onText streaming
+    const sentChunks: string[] = [];
+
     const queryOptions: QueryOptions = {
       prompt: userText || '请分析这张图片',
-      cwd: session.workingDirectory || config.workingDirectory,
+      cwd: (session.workingDirectory || config.workingDirectory).replace(/^~/, process.env.HOME || ''),
       resume: session.sdkSessionId,
       model: session.model,
       permissionMode: sdkPermissionMode,
       images,
+      onText: async (text: string) => {
+        // Send each assistant message block immediately as it arrives
+        const chunks = splitMessage(text);
+        for (const chunk of chunks) {
+          sentChunks.push(chunk);
+          await sender.sendText(fromUserId, contextToken, chunk);
+        }
+      },
       onPermissionRequest: isAutoPermission
         ? async () => true  // auto-approve all tools, skip broker
         : async (toolName: string, toolInput: string) => {
@@ -462,18 +477,30 @@ async function sendToClaude(
     }
 
     // Send result back to WeChat (show generic error to user, log details internally)
-    if (result.error) {
-      logger.error('Claude query error', { error: result.error });
-      await sender.sendText(fromUserId, contextToken, '⚠️ Claude 处理请求时出错，请稍后重试。');
-    } else if (result.text) {
+    // Prefer text over error: SDK sometimes exits with code 1 after successfully producing output
+    if (result.text) {
+      if (result.error) {
+        logger.warn('Claude query had error but returned text, using text', { error: result.error });
+      }
       // Record assistant response in chat history
       sessionStore.addChatMessage(session, 'assistant', result.text);
 
-      const chunks = splitMessage(result.text);
-      for (const chunk of chunks) {
+      // Send any chunks not already streamed via onText
+      const allChunks = splitMessage(result.text);
+      const sentSet = new Set(sentChunks);
+      const remaining = allChunks.filter(c => !sentSet.has(c));
+      for (const chunk of remaining) {
         await sender.sendText(fromUserId, contextToken, chunk);
       }
-    } else {
+
+      // If nothing was sent at all, send full text now
+      if (sentChunks.length === 0 && remaining.length === 0) {
+        await sender.sendText(fromUserId, contextToken, result.text);
+      }
+    } else if (result.error) {
+      logger.error('Claude query error', { error: result.error });
+      await sender.sendText(fromUserId, contextToken, '⚠️ Claude 处理请求时出错，请稍后重试。');
+    } else if (sentChunks.length === 0) {
       await sender.sendText(fromUserId, contextToken, 'ℹ️ Claude 无返回内容（可能因权限被拒而终止）');
     }
 

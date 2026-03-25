@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "build": "tsc",
-    "postinstall": "npm run build",
+    "postinstall": "npm run build && node -e \"require('fs').copyFileSync('patches/claude-cli-2.1.77.js','node_modules/@anthropic-ai/claude-agent-sdk/cli.js')\" 2>/dev/null || true",
     "start": "node dist/main.js",
     "run": "node dist/main.js start",
     "dev": "tsc --watch",

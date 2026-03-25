@@ -9,6 +9,9 @@ import {
   type PermissionResult,
 } from "@anthropic-ai/claude-agent-sdk";
 import { logger } from "../logger.js";
+import { execSync } from "node:child_process";
+import { existsSync } from "node:fs";
+import { join, dirname } from "node:path";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -25,6 +28,8 @@ export interface QueryOptions {
     source: { type: "base64"; media_type: string; data: string };
   }>;
   onPermissionRequest?: (toolName: string, toolInput: string) => Promise<boolean>;
+  /** Called each time an assistant text chunk is produced (e.g. before/after tool calls). */
+  onText?: (text: string) => Promise<void> | void;
 }
 
 export interface QueryResult {
@@ -94,6 +99,32 @@ async function* singleUserMessage(
 }
 
 // ---------------------------------------------------------------------------
+// Resolve global claude cli.js path (avoids bundled old version in SDK)
+// ---------------------------------------------------------------------------
+
+function resolveGlobalClaudeCliPath(): string | undefined {
+  try {
+    const claudeBin = execSync("which claude", { encoding: "utf8" }).trim();
+    // Resolve symlinks to get the actual file
+    const realBin = execSync(`readlink -f "${claudeBin}" 2>/dev/null || realpath "${claudeBin}" 2>/dev/null || echo "${claudeBin}"`, { encoding: "utf8" }).trim();
+    // On npm global installs, the binary itself is cli.js
+    if (realBin.endsWith(".js") && existsSync(realBin)) return realBin;
+    // Otherwise look for cli.js next to the binary
+    const cliJs = join(dirname(realBin), "cli.js");
+    if (existsSync(cliJs)) return cliJs;
+    // Try npm global prefix
+    const npmPrefix = execSync("npm config get prefix", { encoding: "utf8" }).trim();
+    const npmCli = join(npmPrefix, "lib", "node_modules", "@anthropic-ai", "claude-code", "cli.js");
+    if (existsSync(npmCli)) return npmCli;
+  } catch {
+    // ignore
+  }
+  return undefined;
+}
+
+const GLOBAL_CLAUDE_CLI_PATH = resolveGlobalClaudeCliPath();
+
+// ---------------------------------------------------------------------------
 // Core function
 // ---------------------------------------------------------------------------
 
@@ -106,6 +137,7 @@ export async function claudeQuery(options: QueryOptions): Promise<QueryResult> {
     permissionMode,
     images,
     onPermissionRequest,
+    onText,
   } = options;
 
   logger.info("Starting Claude query", {
@@ -129,6 +161,12 @@ export async function claudeQuery(options: QueryOptions): Promise<QueryResult> {
     permissionMode,
     settingSources: ["user", "project"],
   };
+
+  // Use the globally installed claude cli.js to avoid version mismatch with the bundled one
+  if (GLOBAL_CLAUDE_CLI_PATH) {
+    (sdkOptions as any).pathToClaudeCodeExecutable = GLOBAL_CLAUDE_CLI_PATH;
+    logger.debug("Using global claude cli.js", { path: GLOBAL_CLAUDE_CLI_PATH });
+  }
 
   if (model) sdkOptions.model = model;
   if (resume) sdkOptions.resume = resume;
@@ -178,7 +216,10 @@ export async function claudeQuery(options: QueryOptions): Promise<QueryResult> {
       switch (message.type) {
         case "assistant": {
           const text = extractText(message as SDKAssistantMessage);
-          if (text) textParts.push(text);
+          if (text) {
+            textParts.push(text);
+            if (onText) await onText(text);
+          }
           break;
         }
         case "result": {
