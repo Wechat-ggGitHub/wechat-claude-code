@@ -6,8 +6,7 @@ export function buildCdnDownloadUrl(encryptQueryParam: string): string {
   if (!/^[A-Za-z0-9%=&+._~\-/]+$/.test(encryptQueryParam)) {
     throw new Error('Invalid CDN query parameter');
   }
-  // URL-encode the parameter so base64 padding (=) and other special chars are safe
-  return `${CDN_BASE_URL}?${encodeURIComponent(encryptQueryParam)}`;
+  return `${CDN_BASE_URL}/download?encrypted_query_param=${encodeURIComponent(encryptQueryParam)}`;
 }
 
 export async function downloadAndDecrypt(
