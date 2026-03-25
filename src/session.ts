@@ -80,6 +80,8 @@ export function createSessionStore() {
 
   function clear(accountId: string, currentSession?: Session): Session {
     const session: Session = {
+      sdkSessionId: undefined,          // explicitly clear so Object.assign removes it
+      previousSdkSessionId: undefined,
       workingDirectory: currentSession?.workingDirectory ?? process.cwd(),
       model: currentSession?.model,
       permissionMode: currentSession?.permissionMode,

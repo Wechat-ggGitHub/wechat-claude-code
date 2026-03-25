@@ -1,5 +1,6 @@
 import type { CommandContext, CommandResult } from './router.js';
 import { scanAllSkills, formatSkillList, findSkill, type SkillInfo } from '../claude/skill-scanner.js';
+import { loadConfig, saveConfig } from '../config.js';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -19,6 +20,7 @@ const HELP_TEXT = `可用命令：
   /cwd [路径]       查看或切换工作目录
   /model [名称]     查看或切换 Claude 模型
   /permission [模式] 查看或切换权限模式
+  /prompt [内容]    查看或设置系统提示词（全局生效）
 
 其他：
   /skills [full]    列出已安装的 skill（full 显示描述）
@@ -205,6 +207,25 @@ export function handleVersion(): CommandResult {
   } catch {
     return { reply: 'wechat-claude-code (version unknown)', handled: true };
   }
+}
+
+export function handlePrompt(_ctx: CommandContext, args: string): CommandResult {
+  const config = loadConfig();
+  if (!args) {
+    const current = config.systemPrompt;
+    if (current) {
+      return { reply: `📝 当前系统提示词:\n${current}\n\n用法:\n/prompt <提示词>  — 设置\n/prompt clear   — 清除`, handled: true };
+    }
+    return { reply: '📝 暂无系统提示词\n\n用法: /prompt <提示词>\n例: /prompt 用中文回答我', handled: true };
+  }
+  if (args.trim().toLowerCase() === 'clear') {
+    config.systemPrompt = undefined;
+    saveConfig(config);
+    return { reply: '✅ 系统提示词已清除', handled: true };
+  }
+  config.systemPrompt = args.trim();
+  saveConfig(config);
+  return { reply: `✅ 系统提示词已设置:\n${config.systemPrompt}`, handled: true };
 }
 
 export function handleUnknown(cmd: string, args: string): CommandResult {

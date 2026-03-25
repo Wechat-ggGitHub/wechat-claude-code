@@ -48,7 +48,7 @@ export class WeChatApi {
     };
   }
 
-  private async request<T>(
+  private async request<T = Record<string, unknown>>(
     path: string,
     body: unknown,
     timeoutMs: number = 15_000,
@@ -95,9 +95,24 @@ export class WeChatApi {
     );
   }
 
-  /** Send a message to a user. */
+  /** Send a message to a user. Retries up to 3 times on rate-limit (ret: -2). */
   async sendMessage(req: SendMessageReq): Promise<void> {
-    await this.request('ilink/bot/sendmessage', req);
+    const MAX_RETRIES = 3;
+    let delay = 10_000; // start with 10s backoff on rate-limit
+    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+      const res = await this.request<{ ret?: number }>('ilink/bot/sendmessage', req);
+      if ((res as any)?.ret === -2) {
+        if (attempt === MAX_RETRIES) {
+          logger.warn('sendMessage rate-limited after max retries', { attempts: MAX_RETRIES });
+          return; // give up silently rather than crash
+        }
+        logger.warn('sendMessage rate-limited (ret:-2), retrying', { attempt, delayMs: delay });
+        await new Promise(r => setTimeout(r, delay));
+        delay = Math.min(delay * 2, 60_000); // exponential backoff, cap at 60s
+        continue;
+      }
+      return;
+    }
   }
 
   /** Get a presigned upload URL for media files. */
