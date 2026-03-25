@@ -32,7 +32,7 @@ A [Claude Code](https://claude.ai/claude-code) Skill that bridges personal WeCha
 Clone into your Claude Code skills directory:
 
 ```bash
-git clone https://github.com/zkeq/wechat-claude-code.git ~/.claude/skills/wechat-claude-code
+git clone https://github.com/Wechat-ggGitHub/wechat-claude-code.git ~/.claude/skills/wechat-claude-code
 cd ~/.claude/skills/wechat-claude-code
 npm install
 ```

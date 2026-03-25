@@ -32,7 +32,7 @@
 克隆到 Claude Code skills 目录：
 
 ```bash
-git clone https://github.com/zkeq/wechat-claude-code.git ~/.claude/skills/wechat-claude-code
+git clone https://github.com/Wechat-ggGitHub/wechat-claude-code.git ~/.claude/skills/wechat-claude-code
 cd ~/.claude/skills/wechat-claude-code
 npm install
 ```
