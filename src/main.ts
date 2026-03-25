@@ -433,7 +433,7 @@ async function sendToClaude(
     // Unified buffer: text deltas and tool summaries all go here
     let pendingBuffer = '';
     let anySent = false;
-    let lastSendTime = 0;
+    let lastSendTime = Date.now(); // start the clock now, so first delta doesn't fire immediately
     const SEND_INTERVAL_MS = 36_000;
 
     // Send everything in pendingBuffer. force=true ignores rate limit.
