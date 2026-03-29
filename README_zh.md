@@ -6,13 +6,18 @@
 
 ## 功能特性
 
+- **实时进度推送** — 实时查看 Claude 的工具调用（🔧 Bash、📖 Read、🔍 Glob…）
+- **思考预览** — 每次工具调用前展示 💭 Claude 的推理摘要（前 300 字）
+- **中断支持** — 在 Claude 处理中发送新消息可打断当前任务
+- **系统提示词** — 通过 `/prompt` 设置持久化提示词（如"用中文回答"）
 - 通过微信与 Claude Code 进行文字对话
 - 图片识别——发送照片让 Claude 分析
 - 权限审批——在微信中回复 `y`/`n` 控制工具执行
-- 斜杠命令——`/help`、`/clear`、`/model`、`/status`、`/skills`
+- 斜杠命令——`/help`、`/clear`、`/model`、`/prompt`、`/status`、`/skills` 等
 - 在微信中触发任意已安装的 Claude Code Skill
 - 跨平台——macOS（launchd）、Linux（systemd + nohup 回退）
 - 会话持久化——跨消息恢复上下文
+- 限频保护——微信 API 限频时自动指数退避重试
 
 ## 前置条件
 
@@ -75,10 +80,16 @@ npm run daemon -- logs     # 查看最近日志
 |------|------|
 | `/help` | 显示帮助 |
 | `/clear` | 清除当前会话（重新开始） |
+| `/reset` | 完全重置（包括工作目录等设置） |
 | `/model <名称>` | 切换 Claude 模型 |
 | `/permission <模式>` | 切换权限模式 |
+| `/prompt [内容]` | 查看或设置系统提示词（全局生效） |
 | `/status` | 查看当前会话状态 |
+| `/cwd [路径]` | 查看或切换工作目录 |
 | `/skills` | 列出已安装的 Claude Code Skill |
+| `/history [数量]` | 查看最近 N 条对话记录 |
+| `/compact` | 压缩上下文（开始新 SDK 会话，保留历史） |
+| `/undo [数量]` | 撤销最近 N 条对话 |
 | `/<skill> [参数]` | 触发任意已安装的 Skill |
 
 ## 权限审批
@@ -106,7 +117,8 @@ npm run daemon -- logs     # 查看最近日志
 
 - 守护进程通过长轮询监听微信 ilink bot API 的新消息
 - 消息通过 `@anthropic-ai/claude-agent-sdk` 转发给 Claude Code
-- 回复发送回微信
+- 工具调用和思考摘要在 Claude 工作时实时推送
+- 回复发送回微信，限频时自动重试
 - 平台原生服务管理保持守护进程运行（macOS 使用 launchd，Linux 使用 systemd/nohup）
 
 ## 数据目录
@@ -116,7 +128,7 @@ npm run daemon -- logs     # 查看最近日志
 ```
 ~/.wechat-claude-code/
 ├── accounts/       # 微信账号凭证（每个账号一个 JSON）
-├── config.env      # 全局配置（工作目录、模型、权限模式）
+├── config.env      # 全局配置（工作目录、模型、权限模式、系统提示词）
 ├── sessions/       # 会话数据（每个账号一个 JSON）
 ├── get_updates_buf # 消息轮询同步缓冲
 └── logs/           # 运行日志（每日轮转，保留 30 天）

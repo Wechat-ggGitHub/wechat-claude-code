@@ -9,6 +9,9 @@ import {
   type PermissionResult,
 } from "@anthropic-ai/claude-agent-sdk";
 import { logger } from "../logger.js";
+import { execSync } from "node:child_process";
+import { existsSync } from "node:fs";
+import { join, dirname } from "node:path";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -19,12 +22,19 @@ export interface QueryOptions {
   cwd: string;
   resume?: string;
   model?: string;
+  systemPrompt?: string;
   permissionMode?: "default" | "acceptEdits" | "plan";
   images?: Array<{
     type: "image";
     source: { type: "base64"; media_type: string; data: string };
   }>;
   onPermissionRequest?: (toolName: string, toolInput: string) => Promise<boolean>;
+  /** Called each time an assistant text chunk is produced (e.g. before/after tool calls). */
+  onText?: (text: string) => Promise<void> | void;
+  /** Called when Claude invokes a tool, with a human-readable summary. */
+  onThinking?: (summary: string) => Promise<void> | void;
+  /** Optional abort controller to cancel the query (e.g. when user sends a new message). */
+  abortController?: AbortController;
 }
 
 export interface QueryResult {
@@ -36,6 +46,25 @@ export interface QueryResult {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/**
+ * Format a tool_use block into a concise human-readable summary.
+ */
+function formatToolUse(toolName: string, input: Record<string, unknown>): string {
+  const icons: Record<string, string> = {
+    Bash: "🔧", Read: "📖", Write: "✏️", Edit: "✏️", MultiEdit: "✏️",
+    Grep: "🔍", Glob: "🔍", WebFetch: "🌐", WebSearch: "🌐",
+    TodoWrite: "📝", TodoRead: "📝", Task: "🤖",
+  };
+  const icon = icons[toolName] ?? "⚙️";
+  let detail = "";
+  if (input.command) detail = String(input.command).slice(0, 80);
+  else if (input.file_path) detail = String(input.file_path);
+  else if (input.pattern) detail = String(input.pattern).slice(0, 60);
+  else if (input.query) detail = String(input.query).slice(0, 60);
+  else if (input.url) detail = String(input.url).slice(0, 60);
+  return detail ? `${icon} ${toolName}: ${detail}` : `${icon} ${toolName}`;
+}
 
 /**
  * Extract accumulated text from an SDK assistant message's content blocks.
@@ -94,6 +123,32 @@ async function* singleUserMessage(
 }
 
 // ---------------------------------------------------------------------------
+// Resolve global claude cli.js path (avoids bundled old version in SDK)
+// ---------------------------------------------------------------------------
+
+function resolveGlobalClaudeCliPath(): string | undefined {
+  try {
+    const claudeBin = execSync("which claude", { encoding: "utf8" }).trim();
+    // Resolve symlinks to get the actual file
+    const realBin = execSync(`readlink -f "${claudeBin}" 2>/dev/null || realpath "${claudeBin}" 2>/dev/null || echo "${claudeBin}"`, { encoding: "utf8" }).trim();
+    // On npm global installs, the binary itself is cli.js
+    if (realBin.endsWith(".js") && existsSync(realBin)) return realBin;
+    // Otherwise look for cli.js next to the binary
+    const cliJs = join(dirname(realBin), "cli.js");
+    if (existsSync(cliJs)) return cliJs;
+    // Try npm global prefix
+    const npmPrefix = execSync("npm config get prefix", { encoding: "utf8" }).trim();
+    const npmCli = join(npmPrefix, "lib", "node_modules", "@anthropic-ai", "claude-code", "cli.js");
+    if (existsSync(npmCli)) return npmCli;
+  } catch {
+    // ignore
+  }
+  return undefined;
+}
+
+const GLOBAL_CLAUDE_CLI_PATH = resolveGlobalClaudeCliPath();
+
+// ---------------------------------------------------------------------------
 // Core function
 // ---------------------------------------------------------------------------
 
@@ -103,9 +158,13 @@ export async function claudeQuery(options: QueryOptions): Promise<QueryResult> {
     cwd,
     resume,
     model,
+    systemPrompt,
     permissionMode,
     images,
     onPermissionRequest,
+    onText,
+    onThinking,
+    abortController,
   } = options;
 
   logger.info("Starting Claude query", {
@@ -128,10 +187,21 @@ export async function claudeQuery(options: QueryOptions): Promise<QueryResult> {
     cwd,
     permissionMode,
     settingSources: ["user", "project"],
+    includePartialMessages: !!onText,
   };
+
+  // Use the globally installed claude cli.js to avoid version mismatch with the bundled one
+  if (GLOBAL_CLAUDE_CLI_PATH) {
+    (sdkOptions as any).pathToClaudeCodeExecutable = GLOBAL_CLAUDE_CLI_PATH;
+    logger.debug("Using global claude cli.js", { path: GLOBAL_CLAUDE_CLI_PATH });
+  }
 
   if (model) sdkOptions.model = model;
   if (resume) sdkOptions.resume = resume;
+  if (abortController) sdkOptions.abortController = abortController;
+  if (systemPrompt) {
+    (sdkOptions as any).systemPrompt = { type: "preset", preset: "claude_code", append: systemPrompt };
+  }
 
   // Permission callback — bridges the SDK's CanUseTool to our simpler handler.
   if (onPermissionRequest) {
@@ -164,9 +234,12 @@ export async function claudeQuery(options: QueryOptions): Promise<QueryResult> {
   }
 
   // --- Execute query & accumulate output ---
+  const MAX_THINKING_PREVIEW = 300; // max chars per thinking block shown to user
   let sessionId = "";
   const textParts: string[] = [];
   let errorMessage: string | undefined;
+  let thinkingBuf = "";      // accumulates current thinking block
+  let thinkingCapped = false; // true once we've emitted the preview for this block
 
   try {
     const result = query({ prompt: promptParam, options: sdkOptions });
@@ -177,8 +250,60 @@ export async function claudeQuery(options: QueryOptions): Promise<QueryResult> {
 
       switch (message.type) {
         case "assistant": {
-          const text = extractText(message as SDKAssistantMessage);
-          if (text) textParts.push(text);
+          const aMsg = message as SDKAssistantMessage;
+          const content = aMsg.message?.content;
+          // Extract tool_use blocks and notify onThinking
+          if (onThinking) {
+            if (Array.isArray(content)) {
+              for (const block of content) {
+                if ((block as any).type === "tool_use") {
+                  const summary = formatToolUse(
+                    (block as any).name ?? "Tool",
+                    (block as any).input ?? {},
+                  );
+                  await onThinking(summary);
+                }
+              }
+            }
+          }
+          // Accumulate text; only call onText if not already streaming via stream_event
+          const text = extractText(aMsg);
+          if (text) {
+            textParts.push(text);
+            if (onText && !sdkOptions.includePartialMessages) await onText(text);
+          }
+          break;
+        }
+        case "stream_event": {
+          const evt = (message as any).event;
+          if (evt?.type === "content_block_start") {
+            // Reset thinking state at the start of each new block
+            if (evt?.content_block?.type === "thinking") {
+              thinkingBuf = "";
+              thinkingCapped = false;
+            }
+          } else if (evt?.type === "content_block_delta") {
+            const deltaType: string = evt.delta?.type ?? "";
+            if (deltaType === "text_delta" && onText) {
+              const delta: string = evt.delta.text;
+              if (delta) await onText(delta);
+            } else if (deltaType === "thinking_delta" && onText && !thinkingCapped) {
+              // Accumulate thinking text; emit a short preview once we hit the cap
+              thinkingBuf += (evt.delta.thinking as string) ?? "";
+              if (thinkingBuf.length >= MAX_THINKING_PREVIEW) {
+                thinkingCapped = true;
+                await onText("💭 " + thinkingBuf.slice(0, MAX_THINKING_PREVIEW).trim() + "…\n");
+                thinkingBuf = "";
+              }
+            }
+          } else if (evt?.type === "content_block_stop") {
+            // Block ended before hitting the cap — emit what we have (if non-empty)
+            if (thinkingBuf.trim() && onText && !thinkingCapped) {
+              await onText("💭 " + thinkingBuf.trim() + "\n");
+            }
+            thinkingBuf = "";
+            thinkingCapped = false;
+          }
           break;
         }
         case "result": {
@@ -205,7 +330,7 @@ export async function claudeQuery(options: QueryOptions): Promise<QueryResult> {
           break;
         }
         default:
-          // tool_progress, auth_status, stream_event, etc. — ignore
+          // tool_progress, auth_status, etc. — ignore
           break;
       }
     }

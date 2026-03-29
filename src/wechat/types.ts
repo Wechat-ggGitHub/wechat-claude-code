@@ -40,7 +40,7 @@ export interface ImageItem {
   cdn_media?: CDNMedia;
   /** Alternative field name used by some API versions */
   aeskey?: string;
-  media?: { encrypt_query_param: string };
+  media?: { encrypt_query_param: string; aes_key?: string };
   url?: string;
   mid_size?: number;
   hd_size?: number;

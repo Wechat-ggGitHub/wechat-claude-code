@@ -176,6 +176,7 @@ async function runDaemon(): Promise<void> {
 
   const sender = createSender(api, account.accountId);
   const sharedCtx = { lastContextToken: '' };
+  const activeControllers = new Map<string, AbortController>();
   const permissionBroker = createPermissionBroker(async () => {
     try {
       await sender.sendText(account.userId ?? '', sharedCtx.lastContextToken, '⏰ 权限请求超时，已自动拒绝。');
@@ -188,7 +189,7 @@ async function runDaemon(): Promise<void> {
 
   const callbacks: MonitorCallbacks = {
     onMessage: async (msg: WeixinMessage) => {
-      await handleMessage(msg, account, session, sessionStore, permissionBroker, sender, config, sharedCtx);
+      await handleMessage(msg, account, session, sessionStore, permissionBroker, sender, config, sharedCtx, activeControllers);
     },
     onSessionExpired: () => {
       logger.warn('Session expired, will keep retrying...');
@@ -228,6 +229,7 @@ async function handleMessage(
   sender: ReturnType<typeof createSender>,
   config: ReturnType<typeof loadConfig>,
   sharedCtx: { lastContextToken: string },
+  activeControllers: Map<string, AbortController>,
 ): Promise<void> {
   // Filter: only user messages with required fields
   if (msg.message_type !== MessageType.USER) return;
@@ -241,15 +243,25 @@ async function handleMessage(
   const userText = extractTextFromItems(msg.item_list);
   const imageItem = extractFirstImageUrl(msg.item_list);
 
-  // Concurrency guard: reject normal messages and /clear while processing
+  // Concurrency guard: abort current query when new message arrives
   if (session.state === 'processing') {
     if (userText.startsWith('/clear')) {
-      await sender.sendText(fromUserId, contextToken, '⏳ 正在处理上一条消息，请稍后再清除会话');
+      // Force reset stuck session state
+      const ctrl = activeControllers.get(account.accountId);
+      if (ctrl) { ctrl.abort(); activeControllers.delete(account.accountId); }
+      session.state = 'idle';
+      sessionStore.save(account.accountId, session);
+      // Fall through to command routing so /clear executes normally
     } else if (!userText.startsWith('/')) {
-      await sender.sendText(fromUserId, contextToken, '⏳ 正在处理上一条消息，请稍后...');
+      // Abort the current query and process the new message instead
+      const ctrl = activeControllers.get(account.accountId);
+      if (ctrl) { ctrl.abort(); activeControllers.delete(account.accountId); }
+      session.state = 'idle';
+      sessionStore.save(account.accountId, session);
+      // Fall through to send new message to Claude
+    } else if (!userText.startsWith('/status') && !userText.startsWith('/help')) {
+      return;
     }
-    // Allow /status and /help during processing (read-only)
-    if (!userText.startsWith('/status') && !userText.startsWith('/help')) return;
   }
 
   // -- Grace period: catch late y/n after timeout --
@@ -326,6 +338,7 @@ async function handleMessage(
         permissionBroker,
         sender,
         config,
+        activeControllers,
       );
       return;
     }
@@ -356,6 +369,7 @@ async function handleMessage(
     permissionBroker,
     sender,
     config,
+    activeControllers,
   );
 }
 
@@ -374,10 +388,15 @@ async function sendToClaude(
   permissionBroker: ReturnType<typeof createPermissionBroker>,
   sender: ReturnType<typeof createSender>,
   config: ReturnType<typeof loadConfig>,
+  activeControllers: Map<string, AbortController>,
 ): Promise<void> {
   // Set state to processing
   session.state = 'processing';
   sessionStore.save(account.accountId, session);
+
+  // Create abort controller for this query so it can be cancelled by new messages
+  const abortController = new AbortController();
+  activeControllers.set(account.accountId, abortController);
 
   // Record user message in chat history
   sessionStore.addChatMessage(session, 'user', userText || '(图片)');
@@ -411,13 +430,44 @@ async function sendToClaude(
     // Map 'auto' to the SDK's underlying mode (use acceptEdits as base, but we override canUseTool)
     const sdkPermissionMode = isAutoPermission ? 'acceptEdits' : effectivePermissionMode;
 
+    // Unified buffer: text deltas and tool summaries all go here
+    let pendingBuffer = '';
+    let anySent = false;
+    let lastSendTime = Date.now(); // start the clock now, so first delta doesn't fire immediately
+    const SEND_INTERVAL_MS = 36_000;
+
+    // Send everything in pendingBuffer. force=true ignores rate limit.
+    async function trySend(force = false): Promise<void> {
+      if (!pendingBuffer.trim()) return;
+      const now = Date.now();
+      if (!force && now - lastSendTime < SEND_INTERVAL_MS) return;
+      const toSend = pendingBuffer.trim();
+      pendingBuffer = '';
+      const chunks = splitMessage(toSend);
+      for (const chunk of chunks) {
+        lastSendTime = Date.now();
+        anySent = true;
+        await sender.sendText(fromUserId, contextToken, chunk);
+      }
+    }
+
     const queryOptions: QueryOptions = {
       prompt: userText || '请分析这张图片',
-      cwd: session.workingDirectory || config.workingDirectory,
+      cwd: (session.workingDirectory || config.workingDirectory).replace(/^~/, process.env.HOME || ''),
       resume: session.sdkSessionId,
       model: session.model,
+      systemPrompt: config.systemPrompt,
       permissionMode: sdkPermissionMode,
+      abortController,
       images,
+      onText: async (delta: string) => {
+        pendingBuffer += delta;
+        await trySend();
+      },
+      onThinking: async (summary: string) => {
+        pendingBuffer += (pendingBuffer ? '\n' : '') + summary;
+        await trySend();
+      },
       onPermissionRequest: isAutoPermission
         ? async () => true  // auto-approve all tools, skip broker
         : async (toolName: string, toolInput: string) => {
@@ -461,19 +511,26 @@ async function sendToClaude(
       Object.assign(result, retryResult);
     }
 
-    // Send result back to WeChat (show generic error to user, log details internally)
-    if (result.error) {
+    // Flush any remaining buffered content
+    await trySend(true);
+
+    // Send result back to WeChat
+    if (result.text) {
+      if (result.error) {
+        logger.warn('Claude query had error but returned text, using text', { error: result.error });
+      }
+      sessionStore.addChatMessage(session, 'assistant', result.text);
+      // If nothing was streamed at all (e.g. streaming not supported), send full text now
+      if (!anySent) {
+        const chunks = splitMessage(result.text);
+        for (const chunk of chunks) {
+          await sender.sendText(fromUserId, contextToken, chunk);
+        }
+      }
+    } else if (result.error) {
       logger.error('Claude query error', { error: result.error });
       await sender.sendText(fromUserId, contextToken, '⚠️ Claude 处理请求时出错，请稍后重试。');
-    } else if (result.text) {
-      // Record assistant response in chat history
-      sessionStore.addChatMessage(session, 'assistant', result.text);
-
-      const chunks = splitMessage(result.text);
-      for (const chunk of chunks) {
-        await sender.sendText(fromUserId, contextToken, chunk);
-      }
-    } else {
+    } else if (!anySent) {
       await sender.sendText(fromUserId, contextToken, 'ℹ️ Claude 无返回内容（可能因权限被拒而终止）');
     }
 
@@ -482,13 +539,22 @@ async function sendToClaude(
     session.state = 'idle';
     sessionStore.save(account.accountId, session);
   } catch (err) {
-    const errorMsg = err instanceof Error ? err.message : String(err);
-    logger.error('Error in sendToClaude', { error: errorMsg });
-    await sender.sendText(fromUserId, contextToken, '⚠️ 处理消息时出错，请稍后重试。');
-
-    // Reset state
+    const isAbort = err instanceof Error && (err.name === 'AbortError' || err.message.includes('abort'));
+    if (isAbort) {
+      // Query was cancelled by a new incoming message — exit silently
+      logger.info('Claude query aborted by new message');
+    } else {
+      const errorMsg = err instanceof Error ? err.message : String(err);
+      logger.error('Error in sendToClaude', { error: errorMsg });
+      await sender.sendText(fromUserId, contextToken, '⚠️ 处理消息时出错，请稍后重试。');
+    }
     session.state = 'idle';
     sessionStore.save(account.accountId, session);
+  } finally {
+    // Clean up the abort controller if it's still ours
+    if (activeControllers.get(account.accountId) === abortController) {
+      activeControllers.delete(account.accountId);
+    }
   }
 }
 

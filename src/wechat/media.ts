@@ -26,9 +26,10 @@ function getImageCdnData(imageItem: ImageItem): { aesKey: string; encryptQueryPa
   }
 
   // New format: aeskey + media.encrypt_query_param
-  if (imageItem.aeskey && imageItem.media?.encrypt_query_param) {
+  // Use media.aes_key (base64-of-hex) over aeskey (raw hex) since downloadAndDecrypt expects base64
+  if (imageItem.media?.encrypt_query_param && (imageItem.media.aes_key || imageItem.aeskey)) {
     return {
-      aesKey: imageItem.aeskey,
+      aesKey: imageItem.media.aes_key ?? imageItem.aeskey!,
       encryptQueryParam: imageItem.media.encrypt_query_param,
     };
   }

@@ -6,6 +6,7 @@ export interface Config {
   workingDirectory: string;
   model?: string;
   permissionMode?: "default" | "acceptEdits" | "plan" | "auto";
+  systemPrompt?: string;
 }
 
 const CONFIG_DIR = join(homedir(), ".wechat-claude-code");
@@ -45,6 +46,9 @@ function parseConfigFile(content: string): Config {
           config.permissionMode = value;
         }
         break;
+      case "systemPrompt":
+        config.systemPrompt = value;
+        break;
     }
   }
   return config;
@@ -69,6 +73,9 @@ export function saveConfig(config: Config): void {
   }
   if (config.permissionMode) {
     lines.push(`permissionMode=${config.permissionMode}`);
+  }
+  if (config.systemPrompt) {
+    lines.push(`systemPrompt=${config.systemPrompt}`);
   }
   writeFileSync(CONFIG_PATH, lines.join("\n") + "\n", "utf-8");
   if (process.platform !== 'win32') {
