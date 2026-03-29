@@ -434,8 +434,8 @@ async function sendToClaude(
     const effectivePermissionMode = session.permissionMode ?? config.permissionMode;
     const isAutoPermission = effectivePermissionMode === 'auto';
 
-    // Map 'auto' to the SDK's underlying mode (use acceptEdits as base, but we override canUseTool)
-    const sdkPermissionMode = isAutoPermission ? 'acceptEdits' : effectivePermissionMode;
+    // Map 'auto' to bypassPermissions — skips all permission checks in the SDK
+    const sdkPermissionMode = isAutoPermission ? 'bypassPermissions' : effectivePermissionMode;
 
     // Unified buffer: text deltas and tool summaries all go here
     let pendingBuffer = '';
