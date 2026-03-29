@@ -174,6 +174,13 @@ async function runDaemon(): Promise<void> {
     sessionStore.save(account.accountId, session);
   }
 
+  // Fix: reset stale non-idle state on startup (e.g. after crash)
+  if (session.state !== 'idle') {
+    logger.warn('Resetting stale session state on startup', { state: session.state });
+    session.state = 'idle';
+    sessionStore.save(account.accountId, session);
+  }
+
   const sender = createSender(api, account.accountId);
   const sharedCtx = { lastContextToken: '' };
   const activeControllers = new Map<string, AbortController>();

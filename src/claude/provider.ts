@@ -241,10 +241,18 @@ export async function claudeQuery(options: QueryOptions): Promise<QueryResult> {
   let thinkingBuf = "";      // accumulates current thinking block
   let thinkingCapped = false; // true once we've emitted the preview for this block
 
+  const QUERY_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
+
   try {
     const result = query({ prompt: promptParam, options: sdkOptions });
 
-    for await (const message of result) {
+    let timeoutId: ReturnType<typeof setTimeout>;
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      timeoutId = setTimeout(() => reject(new Error('Claude query timed out after 5 minutes')), QUERY_TIMEOUT_MS);
+    });
+
+    const iterateResult = async () => {
+      for await (const message of result) {
       const sid = getSessionId(message);
       if (sid) sessionId = sid;
 
@@ -333,6 +341,13 @@ export async function claudeQuery(options: QueryOptions): Promise<QueryResult> {
           // tool_progress, auth_status, etc. — ignore
           break;
       }
+    }
+    };
+
+    try {
+      await Promise.race([iterateResult(), timeoutPromise]);
+    } finally {
+      clearTimeout(timeoutId!);
     }
   } catch (err: unknown) {
     errorMessage = err instanceof Error ? err.message : String(err);
