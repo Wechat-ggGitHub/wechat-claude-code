@@ -19,7 +19,7 @@ export interface QueryOptions {
   cwd: string;
   resume?: string;
   model?: string;
-  permissionMode?: "default" | "acceptEdits" | "plan";
+  permissionMode?: "default" | "acceptEdits" | "plan" | "bypassPermissions";
   images?: Array<{
     type: "image";
     source: { type: "base64"; media_type: string; data: string };
@@ -127,6 +127,7 @@ export async function claudeQuery(options: QueryOptions): Promise<QueryResult> {
   const sdkOptions: Options = {
     cwd,
     permissionMode,
+    allowDangerouslySkipPermissions: permissionMode === 'bypassPermissions',
     settingSources: ["user", "project"],
   };
 
