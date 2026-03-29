@@ -4,13 +4,19 @@ import type { PendingPermission } from './session.js';
 const PERMISSION_TIMEOUT = 120_000;
 const GRACE_PERIOD = 15_000;
 
-export type OnPermissionTimeout = () => void;
+export type OnPermissionTimeout = (contextToken: string, fromUserId: string) => void;
 
 export function createPermissionBroker(onTimeout?: OnPermissionTimeout) {
   const pending = new Map<string, PendingPermission>();
   const timedOut = new Map<string, number>(); // accountId → timestamp
 
-  function createPending(accountId: string, toolName: string, toolInput: string): Promise<boolean> {
+  function createPending(
+    accountId: string,
+    toolName: string,
+    toolInput: string,
+    contextToken: string,
+    fromUserId: string,
+  ): Promise<boolean> {
     // Clear any existing pending permission for this account to prevent timer leak
     const existing = pending.get(accountId);
     if (existing) {
@@ -29,10 +35,10 @@ export function createPermissionBroker(onTimeout?: OnPermissionTimeout) {
         // Clean up grace period entry after GRACE_PERIOD
         setTimeout(() => timedOut.delete(accountId), GRACE_PERIOD);
         resolve(false);
-        onTimeout?.();
+        onTimeout?.(contextToken, fromUserId);
       }, PERMISSION_TIMEOUT);
 
-      pending.set(accountId, { toolName, toolInput, resolve, timer });
+      pending.set(accountId, { toolName, toolInput, contextToken, fromUserId, resolve, timer });
     });
   }
 

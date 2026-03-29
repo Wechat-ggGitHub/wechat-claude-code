@@ -25,24 +25,100 @@ import { MessageType, type WeixinMessage } from './wechat/types.js';
 
 const MAX_MESSAGE_LENGTH = 2048;
 
+/**
+ * Split a long message into chunks, respecting code blocks.
+ * - Never splits inside a fenced code block (``` ... ```)
+ * - Adds continuation markers if split is unavoidable
+ * - Prefers splitting at paragraph boundaries
+ */
 function splitMessage(text: string, maxLen: number = MAX_MESSAGE_LENGTH): string[] {
   if (text.length <= maxLen) return [text];
+
   const chunks: string[] = [];
   let remaining = text;
+
   while (remaining.length > 0) {
     if (remaining.length <= maxLen) {
       chunks.push(remaining);
       break;
     }
-    // Try to split at a newline near the limit
-    let splitIdx = remaining.lastIndexOf('\n', maxLen);
-    if (splitIdx < maxLen * 0.3) {
-      splitIdx = maxLen;
+
+    // Find the best split point
+    const splitIdx = findBestSplitPoint(remaining, maxLen);
+
+    if (splitIdx <= 0) {
+      // No good split point found, force split with continuation marker
+      const forcedChunk = remaining.slice(0, maxLen - 15) + '\n... (续)';
+      chunks.push(forcedChunk);
+      remaining = '(续) ...\n' + remaining.slice(maxLen - 15);
+      continue;
     }
-    chunks.push(remaining.slice(0, splitIdx));
-    remaining = remaining.slice(splitIdx).replace(/^\n+/, '');
+
+    const chunk = remaining.slice(0, splitIdx);
+    const inCodeBlock = isInCodeBlock(chunk);
+
+    if (inCodeBlock) {
+      // Close the code block and add continuation marker
+      chunks.push(chunk + '\n```\n... (续)');
+      remaining = '```\n(续) ...\n' + remaining.slice(splitIdx).replace(/^\n+/, '');
+    } else {
+      chunks.push(chunk);
+      remaining = remaining.slice(splitIdx).replace(/^\n+/, '');
+    }
   }
+
   return chunks;
+}
+
+/**
+ * Find the best point to split text, avoiding code blocks.
+ */
+function findBestSplitPoint(text: string, maxLen: number): number {
+  // First, try to find if there's a code block ending before maxLen
+  const codeBlockPattern = /```/g;
+  let inBlock = false;
+  let lastCodeBlockEnd = -1;
+  let match;
+
+  while ((match = codeBlockPattern.exec(text.slice(0, maxLen + 100))) !== null) {
+    inBlock = !inBlock;
+    if (!inBlock) {
+      lastCodeBlockEnd = match.index + 3;
+    }
+  }
+
+  // If we're in a code block at maxLen, split at the end of the last complete block
+  if (inBlock && lastCodeBlockEnd > maxLen * 0.3) {
+    return lastCodeBlockEnd;
+  }
+
+  // Try to split at paragraph boundary (double newline)
+  const paragraphIdx = text.lastIndexOf('\n\n', maxLen);
+  if (paragraphIdx > maxLen * 0.3) {
+    return paragraphIdx;
+  }
+
+  // Try to split at single newline
+  const newlineIdx = text.lastIndexOf('\n', maxLen);
+  if (newlineIdx > maxLen * 0.3) {
+    return newlineIdx;
+  }
+
+  // No good split point
+  return -1;
+}
+
+/**
+ * Check if text ends inside an unclosed code block.
+ */
+function isInCodeBlock(text: string): boolean {
+  const codeBlockPattern = /```/g;
+  let count = 0;
+  let match;
+  while ((match = codeBlockPattern.exec(text)) !== null) {
+    count++;
+  }
+  return count % 2 === 1;
 }
 
 function promptUser(question: string, defaultValue?: string): Promise<string> {
@@ -174,19 +250,31 @@ async function runDaemon(): Promise<void> {
     sessionStore.save(account.accountId, session);
   }
 
-  // Fix: reset stale non-idle state on startup (e.g. after crash)
+  // Fix: reset stuck session state after restart (processing/waiting_permission should not persist)
   if (session.state !== 'idle') {
-    logger.warn('Resetting stale session state on startup', { state: session.state });
+    logger.warn('Session state was stuck after restart, resetting to idle', { accountId: account.accountId, previousState: session.state });
     session.state = 'idle';
-    sessionStore.save(account.accountId, session);
   }
 
+  // Always clear sdkSessionId on restart since the SDK process is gone
+  // The SDK session may still exist server-side but local state is inconsistent
+  // Move to previousSdkSessionId for potential manual recovery
+  if (session.sdkSessionId) {
+    logger.info('Clearing SDK session ID on restart', { accountId: account.accountId, sessionId: session.sdkSessionId });
+    session.previousSdkSessionId = session.sdkSessionId;
+    session.sdkSessionId = undefined;
+  }
+
+  sessionStore.save(account.accountId, session);
+
   const sender = createSender(api, account.accountId);
+  // Note: sharedCtx is kept for backward compatibility but permission timeout now uses stored context
   const sharedCtx = { lastContextToken: '' };
   const activeControllers = new Map<string, AbortController>();
-  const permissionBroker = createPermissionBroker(async () => {
+  // Permission broker callback now receives contextToken and fromUserId directly (fixes concurrency issue)
+  const permissionBroker = createPermissionBroker(async (contextToken: string, fromUserId: string) => {
     try {
-      await sender.sendText(account.userId ?? '', sharedCtx.lastContextToken, '⏰ 权限请求超时，已自动拒绝。');
+      await sender.sendText(fromUserId, contextToken, '⏰ 权限请求超时，已自动拒绝。');
     } catch {
       logger.warn('Failed to send permission timeout message');
     }
@@ -244,6 +332,7 @@ async function handleMessage(
 
   const contextToken = msg.context_token ?? '';
   const fromUserId = msg.from_user_id;
+  // Update sharedCtx for backward compatibility (though permission timeout now uses stored context)
   sharedCtx.lastContextToken = contextToken;
 
   // Extract text from items
@@ -411,6 +500,7 @@ async function sendToClaude(
   try {
     // Download image if present
     let images: QueryOptions['images'];
+    let imageDownloadError: string | undefined;
     if (imageItem) {
       const base64DataUri = await downloadImage(imageItem);
       if (base64DataUri) {
@@ -427,8 +517,19 @@ async function sendToClaude(
               },
             },
           ];
+        } else {
+          imageDownloadError = '图片格式解析失败';
+          logger.error('Failed to parse image data URI format');
         }
+      } else {
+        imageDownloadError = '图片下载失败';
+        logger.error('Failed to download image', { imageItem });
       }
+    }
+
+    // Notify user if image processing failed
+    if (imageDownloadError && !images) {
+      await sender.sendText(fromUserId, contextToken, `⚠️ ${imageDownloadError}，将以纯文字模式处理。`);
     }
 
     const effectivePermissionMode = session.permissionMode ?? config.permissionMode;
@@ -482,18 +583,36 @@ async function sendToClaude(
             session.state = 'waiting_permission';
             sessionStore.save(account.accountId, session);
 
-            // Create pending permission
+            // Create pending permission (includes context for timeout message - fixes concurrency)
             const permissionPromise = permissionBroker.createPending(
               account.accountId,
               toolName,
               toolInput,
+              contextToken,
+              fromUserId,
             );
 
             // Send permission message to WeChat
             const perm = permissionBroker.getPending(account.accountId);
             if (perm) {
-              const permMsg = permissionBroker.formatPendingMessage(perm);
-              await sender.sendText(fromUserId, contextToken, permMsg);
+              try {
+                const permMsg = permissionBroker.formatPendingMessage(perm);
+                await sender.sendText(fromUserId, contextToken, permMsg);
+              } catch (sendErr) {
+                // If we can't send the permission request, we must fail the permission
+                // otherwise the SDK will hang indefinitely
+                logger.error('Failed to send permission request to WeChat', { error: sendErr instanceof Error ? sendErr.message : String(sendErr) });
+                permissionBroker.resolvePermission(account.accountId, false);
+                session.state = 'processing';
+                sessionStore.save(account.accountId, session);
+                return false;
+              }
+            } else {
+              // Should not happen: pending permission not found after creation
+              logger.error('Pending permission not found after creation');
+              session.state = 'processing';
+              sessionStore.save(account.accountId, session);
+              return false;
             }
 
             const allowed = await permissionPromise;
@@ -536,7 +655,12 @@ async function sendToClaude(
       }
     } else if (result.error) {
       logger.error('Claude query error', { error: result.error });
-      await sender.sendText(fromUserId, contextToken, '⚠️ Claude 处理请求时出错，请稍后重试。');
+      // Check if it's a resume-related error that might be recoverable
+      const isResumeError = result.error.includes('session') || result.error.includes('resume');
+      const userMsg = isResumeError
+        ? '⚠️ 会话状态异常，已自动重置。请重新发送你的请求。'
+        : '⚠️ Claude 处理请求时出错，请稍后重试。';
+      await sender.sendText(fromUserId, contextToken, userMsg);
     } else if (!anySent) {
       await sender.sendText(fromUserId, contextToken, 'ℹ️ Claude 无返回内容（可能因权限被拒而终止）');
     }

@@ -34,6 +34,8 @@ export interface Session {
 export interface PendingPermission {
   toolName: string;
   toolInput: string;
+  contextToken: string;  // Store context token for timeout message
+  fromUserId: string;    // Store user ID for timeout message
   resolve: (allowed: boolean) => void;
   timer: NodeJS.Timeout;
 }
