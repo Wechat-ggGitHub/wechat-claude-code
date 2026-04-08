@@ -1,5 +1,5 @@
-// WeChat Work (企业微信) protocol type definitions
-// Extracted from the ClawBot WeChat plugin API
+// WeChat iLink Bot protocol type definitions
+// Based on: https://github.com/epiral/weixin-bot/blob/main/docs/protocol-spec.md
 
 // ── Enums ──────────────────────────────────────────────────────────────────
 
@@ -25,9 +25,10 @@ export enum MessageState {
 // ── Media ──────────────────────────────────────────────────────────────────
 
 export interface CDNMedia {
-  aes_key: string;
   encrypt_query_param: string;
-  cdn_url?: string;
+  aes_key: string;
+  full_url?: string; // Complete CDN URL including taskid — needed for re-sent files
+  encrypt_type?: number; // 0 = only file id encrypted, 1 = packed with thumb etc.
 }
 
 // ── Message Items ───────────────────────────────────────────────────────────
@@ -38,26 +39,45 @@ export interface TextItem {
 
 export interface ImageItem {
   cdn_media?: CDNMedia;
-  /** Alternative field name used by some API versions */
+  media?: CDNMedia;
+  thumb_media?: CDNMedia;
   aeskey?: string;
-  media?: { encrypt_query_param: string; aes_key?: string };
   url?: string;
   mid_size?: number;
   hd_size?: number;
+  thumb_size?: number;
+  thumb_width?: number;
+  thumb_height?: number;
 }
 
 export interface VoiceItem {
-  cdn_media: CDNMedia;
-  voice_text?: string;
+  cdn_media?: CDNMedia;
+  media?: CDNMedia;
+  encode_type?: number;
+  bits_per_sample?: number;
+  sample_rate?: number;
+  playtime?: number;
+  text?: string;
 }
 
 export interface FileItem {
-  cdn_media: CDNMedia;
+  cdn_media?: CDNMedia;
+  media?: CDNMedia;
   file_name?: string;
+  md5?: string;
+  len?: string;
 }
 
 export interface VideoItem {
-  cdn_media: CDNMedia;
+  cdn_media?: CDNMedia;
+  media?: CDNMedia;
+  video_size?: number;
+  play_length?: number;
+  video_md5?: string;
+  thumb_media?: CDNMedia;
+  thumb_size?: number;
+  thumb_width?: number;
+  thumb_height?: number;
 }
 
 export interface MessageItem {
@@ -115,15 +135,31 @@ export interface SendMessageReq {
 
 // ── GetUploadUrl API ────────────────────────────────────────────────────────
 
+/** media_type values for getuploadurl */
+export enum MediaType {
+  IMAGE = 1,
+  VIDEO = 2,
+  FILE = 3,
+  VOICE = 4,
+}
+
 export interface GetUploadUrlReq {
-  file_type: string;
-  file_size: number;
-  file_name: string;
+  filekey: string;
+  media_type: MediaType;
+  to_user_id: string;
+  rawsize: number;
+  rawfilemd5: string;
+  filesize: number;
+  no_need_thumb: boolean;
+  aeskey: string;
+  base_info: {
+    channel_version: string;
+  };
 }
 
 export interface GetUploadUrlResp {
-  errcode: number;
-  url: string;
-  aes_key: string;
-  encrypt_query_param: string;
+  ret?: number;
+  errcode?: number;
+  upload_param?: string;
+  thumb_upload_param?: string;
 }

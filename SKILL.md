@@ -10,7 +10,7 @@ description: 微信消息桥接 - 在微信中与 Claude Code 聊天。支持文
 ## 前置条件
 
 - Node.js >= 18
-- macOS（daemon 使用 launchd 管理）
+- macOS / Linux / Windows（Git Bash）
 - 个人微信账号（需扫码绑定）
 - 已安装 Claude Code（`@anthropic-ai/claude-agent-sdk`）
 

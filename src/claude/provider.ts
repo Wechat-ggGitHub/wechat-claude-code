@@ -128,18 +128,50 @@ async function* singleUserMessage(
 
 function resolveGlobalClaudeCliPath(): string | undefined {
   try {
-    const claudeBin = execSync("which claude", { encoding: "utf8" }).trim();
-    // Resolve symlinks to get the actual file
-    const realBin = execSync(`readlink -f "${claudeBin}" 2>/dev/null || realpath "${claudeBin}" 2>/dev/null || echo "${claudeBin}"`, { encoding: "utf8" }).trim();
-    // On npm global installs, the binary itself is cli.js
-    if (realBin.endsWith(".js") && existsSync(realBin)) return realBin;
-    // Otherwise look for cli.js next to the binary
-    const cliJs = join(dirname(realBin), "cli.js");
-    if (existsSync(cliJs)) return cliJs;
-    // Try npm global prefix
-    const npmPrefix = execSync("npm config get prefix", { encoding: "utf8" }).trim();
-    const npmCli = join(npmPrefix, "lib", "node_modules", "@anthropic-ai", "claude-code", "cli.js");
-    if (existsSync(npmCli)) return npmCli;
+    if (process.platform === 'win32') {
+      // Windows: use `where claude` instead of `which`
+      try {
+        const claudeBin = execSync("where claude", { encoding: "utf8" }).trim().split(/\r?\n/)[0];
+        if (claudeBin) {
+          // On Windows, no symlinks to resolve — check directly
+          if (claudeBin.endsWith(".js") && existsSync(claudeBin)) return claudeBin;
+          const cliJs = join(dirname(claudeBin), "cli.js");
+          if (existsSync(cliJs)) return cliJs;
+        }
+      } catch {
+        // `where` failed, fall through
+      }
+
+      // Check well-known Windows npm global path
+      const appData = process.env.APPDATA;
+      if (appData) {
+        const knownPath = join(appData, "npm", "node_modules", "@anthropic-ai", "claude-code", "cli.js");
+        if (existsSync(knownPath)) return knownPath;
+      }
+
+      // Try npm global prefix
+      try {
+        const npmPrefix = execSync("npm config get prefix", { encoding: "utf8" }).trim();
+        const npmCli = join(npmPrefix, "node_modules", "@anthropic-ai", "claude-code", "cli.js");
+        if (existsSync(npmCli)) return npmCli;
+      } catch {
+        // ignore
+      }
+    } else {
+      // macOS / Linux: use `which` and resolve symlinks
+      const claudeBin = execSync("which claude", { encoding: "utf8" }).trim();
+      // Resolve symlinks to get the actual file
+      const realBin = execSync(`readlink -f "${claudeBin}" 2>/dev/null || realpath "${claudeBin}" 2>/dev/null || echo "${claudeBin}"`, { encoding: "utf8" }).trim();
+      // On npm global installs, the binary itself is cli.js
+      if (realBin.endsWith(".js") && existsSync(realBin)) return realBin;
+      // Otherwise look for cli.js next to the binary
+      const cliJs = join(dirname(realBin), "cli.js");
+      if (existsSync(cliJs)) return cliJs;
+      // Try npm global prefix
+      const npmPrefix = execSync("npm config get prefix", { encoding: "utf8" }).trim();
+      const npmCli = join(npmPrefix, "lib", "node_modules", "@anthropic-ai", "claude-code", "cli.js");
+      if (existsSync(npmCli)) return npmCli;
+    }
   } catch {
     // ignore
   }
@@ -175,12 +207,9 @@ export async function claudeQuery(options: QueryOptions): Promise<QueryResult> {
     hasImages: !!images?.length,
   });
 
-  // When images are present we use the multi-content AsyncIterable path;
-  // otherwise a plain string is simpler and sufficient.
-  const hasImages = images && images.length > 0;
-  const promptParam: string | AsyncIterable<SDKUserMessage> = hasImages
-    ? singleUserMessage(prompt, images)
-    : prompt;
+  // Always use the streaming-input path so text-only turns and image turns
+  // reuse the same SDK input mode across a resumed session.
+  const promptParam: AsyncIterable<SDKUserMessage> = singleUserMessage(prompt, images);
 
   // --- Build SDK options ---
   const sdkOptions: Options = {
@@ -235,22 +264,12 @@ export async function claudeQuery(options: QueryOptions): Promise<QueryResult> {
   }
 
   // --- Execute query & accumulate output ---
-  const MAX_THINKING_PREVIEW = 300; // max chars per thinking block shown to user
   let sessionId = "";
   const textParts: string[] = [];
   let errorMessage: string | undefined;
-  let thinkingBuf = "";      // accumulates current thinking block
-  let thinkingCapped = false; // true once we've emitted the preview for this block
-
-  const QUERY_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
 
   try {
     const result = query({ prompt: promptParam, options: sdkOptions });
-
-    let timeoutId: ReturnType<typeof setTimeout>;
-    const timeoutPromise = new Promise<never>((_, reject) => {
-      timeoutId = setTimeout(() => reject(new Error('Claude query timed out after 5 minutes')), QUERY_TIMEOUT_MS);
-    });
 
     const iterateResult = async () => {
       for await (const message of result) {
@@ -285,33 +304,12 @@ export async function claudeQuery(options: QueryOptions): Promise<QueryResult> {
         }
         case "stream_event": {
           const evt = (message as any).event;
-          if (evt?.type === "content_block_start") {
-            // Reset thinking state at the start of each new block
-            if (evt?.content_block?.type === "thinking") {
-              thinkingBuf = "";
-              thinkingCapped = false;
-            }
-          } else if (evt?.type === "content_block_delta") {
+          if (evt?.type === "content_block_delta") {
             const deltaType: string = evt.delta?.type ?? "";
             if (deltaType === "text_delta" && onText) {
               const delta: string = evt.delta.text;
               if (delta) await onText(delta);
-            } else if (deltaType === "thinking_delta" && onText && !thinkingCapped) {
-              // Accumulate thinking text; emit a short preview once we hit the cap
-              thinkingBuf += (evt.delta.thinking as string) ?? "";
-              if (thinkingBuf.length >= MAX_THINKING_PREVIEW) {
-                thinkingCapped = true;
-                await onText("💭 " + thinkingBuf.slice(0, MAX_THINKING_PREVIEW).trim() + "…\n");
-                thinkingBuf = "";
-              }
             }
-          } else if (evt?.type === "content_block_stop") {
-            // Block ended before hitting the cap — emit what we have (if non-empty)
-            if (thinkingBuf.trim() && onText && !thinkingCapped) {
-              await onText("💭 " + thinkingBuf.trim() + "\n");
-            }
-            thinkingBuf = "";
-            thinkingCapped = false;
           }
           break;
         }
@@ -346,9 +344,9 @@ export async function claudeQuery(options: QueryOptions): Promise<QueryResult> {
     };
 
     try {
-      await Promise.race([iterateResult(), timeoutPromise]);
+      await iterateResult();
     } finally {
-      clearTimeout(timeoutId!);
+      // no timeout — wait indefinitely
     }
   } catch (err: unknown) {
     errorMessage = err instanceof Error ? err.message : String(err);
