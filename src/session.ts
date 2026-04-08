@@ -35,7 +35,7 @@ export interface PendingPermission {
   toolName: string;
   toolInput: string;
   resolve: (allowed: boolean) => void;
-  timer: NodeJS.Timeout;
+  timer: NodeJS.Timeout | null;
 }
 
 const DEFAULT_MAX_HISTORY = 100;

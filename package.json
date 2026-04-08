@@ -15,6 +15,7 @@
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.1.0",
+    "@ffmpeg-installer/ffmpeg": "^1.1.0",
     "qrcode": "^1.5.4",
     "qrcode-terminal": "^0.12.0"
   },
@@ -24,7 +25,14 @@
     "@types/qrcode-terminal": "^0.12.0",
     "typescript": "^5.7.0"
   },
-  "keywords": ["wechat", "claude-code", "claude", "bridge", "chat", "skill"],
+  "keywords": [
+    "wechat",
+    "claude-code",
+    "claude",
+    "bridge",
+    "chat",
+    "skill"
+  ],
   "author": "Wechat-ggGitHub",
   "license": "MIT",
   "repository": {

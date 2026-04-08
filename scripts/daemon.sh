@@ -376,47 +376,209 @@ linux_logs() {
 }
 
 # =============================================================================
+# Windows (Git Bash / MINGW / MSYS) functions
+# =============================================================================
+
+win32_pid_file() {
+  echo "${DATA_DIR}/${SERVICE_NAME}.pid"
+}
+
+win32_is_process_running() {
+  local pid="$1"
+  # Git Bash on Windows supports /proc/$PID
+  [ -d "/proc/$pid" ] 2>/dev/null
+}
+
+win32_find_daemon_pids() {
+  # Find all node processes running our daemon entry point
+  ps -W 2>/dev/null | grep -i "node" | grep "dist/main.js" | awk '{print $1}' | head -20
+  # Also try pgrep-style via /proc
+  for p in /proc/[0-9]*/cmdline; do
+    if [ -f "$p" ] && grep -ql "dist/main.js" "$p" 2>/dev/null; then
+      basename "$(dirname "$p")"
+    fi
+  done 2>/dev/null
+}
+
+win32_start() {
+  local pid_file="$(win32_pid_file)"
+  local node_bin="$(command -v node 2>/dev/null || echo 'node')"
+
+  # Check if already running via PID file
+  if [ -f "$pid_file" ]; then
+    local old_pid=$(cat "$pid_file" 2>/dev/null)
+    if [ -n "$old_pid" ] && win32_is_process_running "$old_pid"; then
+      echo "Already running (PID: $old_pid)"
+      exit 0
+    fi
+    rm -f "$pid_file"
+  fi
+
+  mkdir -p "$DATA_DIR/logs"
+
+  echo "Starting wechat-claude-code daemon (Windows)..."
+
+  # Start daemon in background
+  "$node_bin" "${PROJECT_DIR}/dist/main.js" start \
+    >> "$DATA_DIR/logs/stdout.log" \
+    2>> "$DATA_DIR/logs/stderr.log" &
+  local pid=$!
+  echo "$pid" > "$pid_file"
+
+  # Give it a moment to start (or fail immediately)
+  sleep 2
+
+  if win32_is_process_running "$pid"; then
+    echo "Started (PID: $pid)"
+    echo "Logs: $DATA_DIR/logs/stdout.log"
+  else
+    echo "ERROR: Process exited immediately. Check logs:"
+    tail -20 "$DATA_DIR/logs/stderr.log" 2>/dev/null
+    rm -f "$pid_file"
+    exit 1
+  fi
+}
+
+win32_stop() {
+  local pid_file="$(win32_pid_file)"
+
+  if [ ! -f "$pid_file" ]; then
+    echo "Not running (no PID file)"
+    exit 0
+  fi
+
+  local pid=$(cat "$pid_file" 2>/dev/null)
+  if [ -z "$pid" ]; then
+    rm -f "$pid_file"
+    echo "Stopped"
+    exit 0
+  fi
+
+  if win32_is_process_running "$pid"; then
+    kill "$pid" 2>/dev/null || taskkill //PID "$pid" //F 2>/dev/null || true
+    local count=0
+    while win32_is_process_running "$pid" && [ $count -lt 10 ]; do
+      sleep 1
+      count=$((count + 1))
+    done
+    # Force kill if still running
+    if win32_is_process_running "$pid"; then
+      taskkill //PID "$pid" //F 2>/dev/null || true
+    fi
+    echo "Stopped (PID: $pid)"
+  else
+    echo "Process not running (cleaning up PID file)"
+  fi
+
+  rm -f "$pid_file"
+}
+
+win32_status() {
+  local pid_file="$(win32_pid_file)"
+
+  if [ ! -f "$pid_file" ]; then
+    echo "Not running"
+    exit 0
+  fi
+
+  local pid=$(cat "$pid_file" 2>/dev/null)
+  if [ -z "$pid" ]; then
+    echo "Not running (invalid PID file)"
+    exit 0
+  fi
+
+  if win32_is_process_running "$pid"; then
+    echo "Running (PID: $pid)"
+  else
+    echo "Not running (stale PID file)"
+  fi
+}
+
+win32_logs() {
+  local log_dir="${DATA_DIR}/logs"
+  if [ -d "$log_dir" ]; then
+    local latest=$(ls -t "${log_dir}"/bridge-*.log 2>/dev/null | head -1)
+    if [ -n "$latest" ]; then
+      echo "=== Bridge log: $(basename "$latest") (last 100 lines) ==="
+      tail -100 "$latest"
+    fi
+    for f in "${log_dir}"/stdout.log "${log_dir}"/stderr.log; do
+      if [ -f "$f" ]; then
+        echo ""
+        echo "=== $(basename "$f") (last 30 lines) ==="
+        tail -30 "$f"
+      fi
+    done
+  else
+    echo "No logs found"
+  fi
+}
+
+# =============================================================================
 # Main dispatcher
 # =============================================================================
+
+# Detect Windows: MINGW, MSYS, or CYGWIN
+is_windows() {
+  case "$OS_TYPE" in
+    MINGW*|MSYS*|CYGWIN*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
 
 main() {
   local command="${1:-}"
 
-  case "$OS_TYPE" in
-    Darwin)
-      case "$command" in
-        start)   macos_start ;;
-        stop)    macos_stop ;;
-        restart) macos_stop; sleep 1; macos_start ;;
-        status)  macos_status ;;
-        logs)    macos_logs ;;
-        *)
-          echo "Usage: daemon.sh {start|stop|restart|status|logs}"
-          echo "Platform: macOS (launchd)"
-          exit 1
-          ;;
-      esac
-      ;;
-    Linux)
-      case "$command" in
-        start)   linux_start ;;
-        stop)    linux_stop ;;
-        restart) linux_restart ;;
-        status)  linux_status ;;
-        logs)    linux_logs ;;
-        *)
-          echo "Usage: daemon.sh {start|stop|restart|status|logs}"
-          echo "Platform: Linux (systemd)"
-          exit 1
-          ;;
-      esac
-      ;;
-    *)
-      echo "Error: Unsupported platform '$OS_TYPE'"
-      echo "Supported platforms: macOS (Darwin), Linux"
-      exit 1
-      ;;
-  esac
+  if is_windows; then
+    case "$command" in
+      start)   win32_start ;;
+      stop)    win32_stop ;;
+      restart) win32_stop; sleep 1; win32_start ;;
+      status)  win32_status ;;
+      logs)    win32_logs ;;
+      *)
+        echo "Usage: daemon.sh {start|stop|restart|status|logs}"
+        echo "Platform: Windows (Git Bash)"
+        exit 1
+        ;;
+    esac
+  else
+    case "$OS_TYPE" in
+      Darwin)
+        case "$command" in
+          start)   macos_start ;;
+          stop)    macos_stop ;;
+          restart) macos_stop; sleep 1; macos_start ;;
+          status)  macos_status ;;
+          logs)    macos_logs ;;
+          *)
+            echo "Usage: daemon.sh {start|stop|restart|status|logs}"
+            echo "Platform: macOS (launchd)"
+            exit 1
+            ;;
+        esac
+        ;;
+      Linux)
+        case "$command" in
+          start)   linux_start ;;
+          stop)    linux_stop ;;
+          restart) linux_restart ;;
+          status)  linux_status ;;
+          logs)    linux_logs ;;
+          *)
+            echo "Usage: daemon.sh {start|stop|restart|status|logs}"
+            echo "Platform: Linux (systemd)"
+            exit 1
+            ;;
+        esac
+        ;;
+      *)
+        echo "Error: Unsupported platform '$OS_TYPE'"
+        echo "Supported platforms: macOS (Darwin), Linux, Windows (Git Bash)"
+        exit 1
+        ;;
+    esac
+  fi
 }
 
 main "$@"

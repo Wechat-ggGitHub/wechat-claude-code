@@ -1,7 +1,7 @@
 import { logger } from './logger.js';
 import type { PendingPermission } from './session.js';
 
-const PERMISSION_TIMEOUT = 120_000;
+// No timeout — wait indefinitely for user response
 const GRACE_PERIOD = 15_000;
 
 export type OnPermissionTimeout = () => void;
@@ -14,7 +14,7 @@ export function createPermissionBroker(onTimeout?: OnPermissionTimeout) {
     // Clear any existing pending permission for this account to prevent timer leak
     const existing = pending.get(accountId);
     if (existing) {
-      clearTimeout(existing.timer);
+      if (existing.timer) clearTimeout(existing.timer);
       pending.delete(accountId);
       existing.resolve(false);
       logger.warn('Replaced existing pending permission', { accountId, toolName: existing.toolName });
@@ -22,15 +22,8 @@ export function createPermissionBroker(onTimeout?: OnPermissionTimeout) {
 
     timedOut.delete(accountId); // clear any previous timeout flag
     return new Promise<boolean>((resolve) => {
-      const timer = setTimeout(() => {
-        logger.warn('Permission timeout, auto-denied', { accountId, toolName });
-        pending.delete(accountId);
-        timedOut.set(accountId, Date.now());
-        // Clean up grace period entry after GRACE_PERIOD
-        setTimeout(() => timedOut.delete(accountId), GRACE_PERIOD);
-        resolve(false);
-        onTimeout?.();
-      }, PERMISSION_TIMEOUT);
+      // No timeout timer — wait forever until user responds y/n
+      const timer: ReturnType<typeof setTimeout> | null = null;
 
       pending.set(accountId, { toolName, toolInput, resolve, timer });
     });
@@ -39,7 +32,7 @@ export function createPermissionBroker(onTimeout?: OnPermissionTimeout) {
   function resolvePermission(accountId: string, allowed: boolean): boolean {
     const perm = pending.get(accountId);
     if (!perm) return false;
-    clearTimeout(perm.timer);
+    if (perm.timer) clearTimeout(perm.timer);
     pending.delete(accountId);
     perm.resolve(allowed);
     logger.info('Permission resolved', { accountId, toolName: perm.toolName, allowed });
@@ -66,14 +59,13 @@ export function createPermissionBroker(onTimeout?: OnPermissionTimeout) {
       `\u8F93\u5165: ${perm.toolInput.slice(0, 500)}`,
       '',
       '\u56DE\u590D y \u5141\u8BB8\uFF0Cn \u62D2\u7EDD',
-      '(120\u79D2\u672A\u56DE\u590D\u81EA\u52A8\u62D2\u7EDD)',
     ].join('\n');
   }
 
   function rejectPending(accountId: string): boolean {
     const perm = pending.get(accountId);
     if (!perm) return false;
-    clearTimeout(perm.timer);
+    if (perm.timer) clearTimeout(perm.timer);
     pending.delete(accountId);
     perm.resolve(false);
     logger.info('Permission auto-rejected (session cleared)', { accountId, toolName: perm.toolName });
