@@ -157,48 +157,6 @@ function splitMessage(text: string, maxLen: number = MAX_MESSAGE_LENGTH): string
   return chunks;
 }
 
-function isContextLeakLine(line: string): boolean {
-  const trimmed = line.trim();
-  if (!trimmed) {
-    return false;
-  }
-
-  return [
-    /会话恢复了一下/i,
-    /会话被中断了/i,
-    /依据上面的历史继续/i,
-    /依据上面.*历史继续/i,
-    /依据上面的会话历史继续/i,
-    /依据上面.*会话历史继续/i,
-    /我是依据.*历史继续/i,
-    /我是依据.*会话历史继续/i,
-    /我依据.*历史继续/i,
-    /我依据.*会话历史继续/i,
-    /根据上面的历史继续/i,
-    /根据上面的会话历史继续/i,
-    /根据历史继续/i,
-    /根据会话历史继续/i,
-    /沿着上面的历史继续/i,
-    /沿着上面的会话历史继续/i,
-  ].some((pattern) => pattern.test(trimmed));
-}
-
-function isProcessChatterLine(line: string): boolean {
-  const trimmed = line.trim();
-  if (!trimmed) {
-    return false;
-  }
-
-  return [
-    /^这是之前扫描的残留输出/i,
-    /^我现在派\d+个Agent/i,
-    /^我现在派Agent/i,
-    /^我继续(看看|看下|看一下|查|查下|查一下|确认|确认下|检查|检查下|处理)/i,
-    /^让我(先)?(看看|看下|看一下|查|查下|查一下|确认|确认下|检查|检查下|过一遍|翻一下|拉取)/i,
-    /^我(先|来|去)(看看|看下|看一下|查|查下|查一下|确认|确认下|检查|检查下|过一遍|翻一下|拉取)/i,
-  ].some((pattern) => pattern.test(trimmed));
-}
-
 function cleanupFinalWechatText(text: string, sentEarlyResponse: boolean): string {
   const lines = text
     .replace(/\r\n/g, '\n')
@@ -214,14 +172,6 @@ function cleanupFinalWechatText(text: string, sentEarlyResponse: boolean): strin
       if (cleaned.length > 0 && cleaned[cleaned.length - 1] !== '') {
         cleaned.push('');
       }
-      continue;
-    }
-
-    if (isContextLeakLine(trimmed)) {
-      continue;
-    }
-
-    if (isProcessChatterLine(trimmed)) {
       continue;
     }
 
@@ -243,7 +193,7 @@ function cleanupFinalWechatText(text: string, sentEarlyResponse: boolean): strin
         cleaned.shift();
         continue;
       }
-      if (isGoodEarlyResponse(firstLine) || isProcessChatterLine(firstLine)) {
+      if (isGoodEarlyResponse(firstLine)) {
         cleaned.shift();
         while (cleaned.length > 0 && cleaned[0] === '') {
           cleaned.shift();
@@ -333,10 +283,6 @@ function splitWechatReply(text: string, targetLen: number = FINAL_REPLY_TARGET_L
 function isGoodEarlyResponse(text: string): boolean {
   const trimmed = text.trim();
   if (!trimmed) {
-    return false;
-  }
-
-  if (isContextLeakLine(trimmed)) {
     return false;
   }
 
