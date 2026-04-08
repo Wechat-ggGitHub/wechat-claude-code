@@ -111,12 +111,9 @@ function buildPromptWithHistory(basePrompt: string, session: Session): string {
   }
 
   return [
-    '以下是该微信会话最近的对话上下文，请延续此前已经确认的信息和正在进行的任务，不要把它当成全新的独立问题。',
-    '',
     ...contextLines,
     '',
-    '当前用户消息：',
-    basePrompt,
+    `用户: ${basePrompt}`,
   ].join('\n');
 }
 
@@ -167,12 +164,21 @@ function isContextLeakLine(line: string): boolean {
   }
 
   return [
+    /会话恢复了一下/i,
+    /会话被中断了/i,
+    /依据上面的历史继续/i,
+    /依据上面.*历史继续/i,
     /依据上面的会话历史继续/i,
     /依据上面.*会话历史继续/i,
+    /我是依据.*历史继续/i,
     /我是依据.*会话历史继续/i,
+    /我依据.*历史继续/i,
     /我依据.*会话历史继续/i,
+    /根据上面的历史继续/i,
     /根据上面的会话历史继续/i,
+    /根据历史继续/i,
     /根据会话历史继续/i,
+    /沿着上面的历史继续/i,
     /沿着上面的会话历史继续/i,
   ].some((pattern) => pattern.test(trimmed));
 }
