@@ -73,9 +73,15 @@ export async function downloadImage(item: MessageItem): Promise<string | null> {
 
 /**
  * Extract text content from a message item.
- * Returns text_item.text or empty string.
+ * Handles text items and voice items (using ASR transcription).
  */
 export function extractText(item: MessageItem): string {
+  if (item.type === MessageItemType.VOICE) {
+    const voiceText = item.voice_item?.voice_text || item.voice_item?.text;
+    if (voiceText) {
+      return `[语音] ${voiceText}`;
+    }
+  }
   return item.text_item?.text ?? '';
 }
 

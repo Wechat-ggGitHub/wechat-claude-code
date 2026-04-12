@@ -48,7 +48,9 @@ export interface ImageItem {
 
 export interface VoiceItem {
   cdn_media: CDNMedia;
+  media?: { encrypt_query_param: string; aes_key?: string };
   voice_text?: string;
+  text?: string;
 }
 
 export interface FileItem {
