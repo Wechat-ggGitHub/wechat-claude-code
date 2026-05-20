@@ -10,7 +10,7 @@ description: 微信消息桥接 - 在微信中与 Claude Code 聊天。支持文
 ## 前置条件
 
 - Node.js >= 18
-- macOS（daemon 使用 launchd 管理）
+- **Windows 10+** / macOS / Linux
 - 个人微信账号（需扫码绑定）
 - 已安装 Claude Code（`@anthropic-ai/claude-agent-sdk`）
 
@@ -52,8 +52,14 @@ ls ~/.wechat-claude-code/accounts/*.json 2>/dev/null | head -1
 
 ### 第 3 步：检查 daemon 运行状态
 
+**macOS / Linux：**
 ```bash
 cd ~/.claude/skills/wechat-claude-code && npm run daemon -- status
+```
+
+**Windows：**
+```powershell
+cd ~/.claude/skills/wechat-claude-code && npm run daemon:ps -- status
 ```
 
 ### 第 4 步：根据状态展示信息
@@ -93,14 +99,27 @@ cd ~/.claude/skills/wechat-claude-code && npm run daemon -- status
 
 所有命令的工作目录为 `~/.claude/skills/wechat-claude-code`。
 
+### macOS / Linux
+
 | 命令 | 执行 | 说明 |
 |------|------|------|
 | setup | `npm run setup` | 首次安装向导：生成 QR 码 → 微信扫码 → 配置工作目录 |
-| start | `npm run daemon -- start` | 启动 launchd 守护进程（开机自启、自动重启） |
+| start | `npm run daemon -- start` | 启动守护进程（launchd/systemd） |
 | stop | `npm run daemon -- stop` | 停止守护进程 |
 | restart | `npm run daemon -- restart` | 重启守护进程 |
 | status | `npm run daemon -- status` | 查看运行状态 |
-| logs | `npm run daemon -- logs` | 查看最近日志（tail -100） |
+| logs | `npm run daemon -- logs` | 查看最近日志 |
+
+### Windows (PowerShell)
+
+| 命令 | 执行 | 说明 |
+|------|------|------|
+| setup | `npm run setup` | 首次安装向导：生成 QR 码 → 微信扫码 → 配置工作目录 |
+| start | `npm run daemon:ps -- start` | 启动后台守护进程 |
+| stop | `npm run daemon:ps -- stop` | 停止守护进程 |
+| restart | `npm run daemon:ps -- restart` | 重启守护进程 |
+| status | `npm run daemon:ps -- status` | 查看运行状态 |
+| logs | `npm run daemon:ps -- logs` | 查看最近日志 |
 
 ## 权限审批
 
