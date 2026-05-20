@@ -15,14 +15,14 @@ A [Claude Code](https://claude.ai/claude-code) Skill that bridges personal WeCha
 - Permission approval — reply `y`/`n` in WeChat to approve Claude's tool use
 - Slash commands — `/help`, `/clear`, `/model`, `/prompt`, `/status`, `/skills`, and more
 - Launch any installed Claude Code skill from WeChat
-- Cross-platform — macOS (launchd), Linux (systemd + nohup fallback)
+- Cross-platform — macOS (launchd), Linux (systemd + nohup fallback), Windows (PowerShell daemon)
 - Session persistence — resume conversations across messages
 - Rate-limit safe — automatic exponential backoff on WeChat API throttling
 
 ## Prerequisites
 
 - Node.js >= 18
-- macOS or Linux
+- **Windows 10+** / macOS / Linux
 - Personal WeChat account (QR code binding required)
 - [Claude Code](https://docs.anthropic.com/en/docs/claude-code) with `@anthropic-ai/claude-agent-sdk` installed
   > **Note:** The SDK supports third-party API providers (e.g. OpenRouter, AWS Bedrock, custom OpenAI-compatible endpoints) — set `ANTHROPIC_BASE_URL` and `ANTHROPIC_API_KEY` accordingly.
@@ -54,6 +54,7 @@ A QR code image will open — scan it with WeChat. Then configure your working d
 
 ### 2. Start the daemon
 
+**macOS / Linux:**
 ```bash
 npm run daemon -- start
 ```
@@ -61,17 +62,33 @@ npm run daemon -- start
 - **macOS**: registers a launchd agent for auto-start and auto-restart
 - **Linux**: uses systemd user service (falls back to nohup if systemd unavailable)
 
+**Windows (PowerShell):**
+```powershell
+npm run daemon:ps -- start
+```
+
+Runs the Node.js daemon in background. Logs are written to `~/.wechat-claude-code/logs/`.
+
 ### 3. Chat in WeChat
 
 Send any message in WeChat to start chatting with Claude Code.
 
 ### 4. Manage the service
 
+**macOS / Linux:**
 ```bash
 npm run daemon -- status   # Check if running
 npm run daemon -- stop     # Stop the daemon
 npm run daemon -- restart  # Restart (after code updates)
 npm run daemon -- logs     # View recent logs
+```
+
+**Windows (PowerShell):**
+```powershell
+npm run daemon:ps -- status   # Check if running
+npm run daemon:ps -- stop     # Stop the daemon
+npm run daemon:ps -- restart  # Restart
+npm run daemon:ps -- logs     # View recent logs
 ```
 
 ## WeChat Commands

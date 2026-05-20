@@ -15,14 +15,14 @@
 - 权限审批——在微信中回复 `y`/`n` 控制工具执行
 - 斜杠命令——`/help`、`/clear`、`/model`、`/prompt`、`/status`、`/skills` 等
 - 在微信中触发任意已安装的 Claude Code Skill
-- 跨平台——macOS（launchd）、Linux（systemd + nohup 回退）
+- 跨平台——macOS（launchd）、Linux（systemd + nohup 回退）、Windows（PowerShell 守护进程）
 - 会话持久化——跨消息恢复上下文
 - 限频保护——微信 API 限频时自动指数退避重试
 
 ## 前置条件
 
 - Node.js >= 18
-- macOS 或 Linux
+- **Windows 10+** / macOS / Linux
 - 个人微信账号（需扫码绑定）
 - 已安装 [Claude Code](https://docs.anthropic.com/en/docs/claude-code)（含 `@anthropic-ai/claude-agent-sdk`）
   > **注意：** 该 SDK 支持第三方 API 提供商（如 OpenRouter、AWS Bedrock、自定义 OpenAI 兼容接口）——按需设置 `ANTHROPIC_BASE_URL` 与 `ANTHROPIC_API_KEY` 即可。
@@ -54,6 +54,7 @@ npm run setup
 
 ### 2. 启动服务
 
+**macOS / Linux：**
 ```bash
 npm run daemon -- start
 ```
@@ -61,17 +62,30 @@ npm run daemon -- start
 - **macOS**：注册 launchd 代理，实现开机自启和自动重启
 - **Linux**：使用 systemd 用户服务（无 systemd 时回退到 nohup）
 
+**Windows（PowerShell）：**
+```powershell
+npm run daemon:ps -- start
+```
+
+后台运行 Node.js 守护进程，日志输出到 `~/.wechat-claude-code/logs/`。
+
 ### 3. 在微信中聊天
-
-直接在微信中发消息即可与 Claude Code 对话。
-
 ### 4. 管理服务
 
+**macOS / Linux：**
 ```bash
 npm run daemon -- status   # 查看运行状态
 npm run daemon -- stop     # 停止服务
 npm run daemon -- restart  # 重启服务（代码更新后使用）
 npm run daemon -- logs     # 查看最近日志
+```
+
+**Windows（PowerShell）：**
+```powershell
+npm run daemon:ps -- status   # 查看运行状态
+npm run daemon:ps -- stop     # 停止服务
+npm run daemon:ps -- restart  # 重启服务
+npm run daemon:ps -- logs     # 查看最近日志
 ```
 
 ## 微信端命令

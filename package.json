@@ -11,7 +11,8 @@
     "dev": "tsc --watch",
     "test": "node --test dist/tests/*.test.js",
     "setup": "node dist/main.js setup",
-    "daemon": "bash scripts/daemon.sh"
+    "daemon": "bash scripts/daemon.sh",
+    "daemon:ps": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/daemon.ps1"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.1.0",
