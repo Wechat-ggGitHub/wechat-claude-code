@@ -12,6 +12,8 @@ A [Claude Code](https://claude.ai/claude-code) Skill that bridges personal WeCha
 - **System prompt** — set a persistent prompt via `/prompt` (e.g. "Reply in Chinese")
 - **Auto-approved tool access** — all tools run without manual approval for seamless operation
 - Text conversation with Claude Code through WeChat
+- Voice messages — speech-to-text automatically via WeChat
+- File & video notifications — file names and video alerts forwarded to Claude
 - Image recognition — send photos for Claude to analyze
 - Slash commands — `/help`, `/clear`, `/model`, `/prompt`, `/status`, `/skills`, and more
 - Launch any installed Claude Code skill from WeChat
