@@ -1,3 +1,6 @@
+import path from 'node:path';
+import os from 'node:os';
+import fs from 'node:fs';
 import type { MessageItem, ImageItem } from './types.js';
 import { MessageItemType } from './types.js';
 import { downloadAndDecrypt } from './cdn.js';
@@ -84,4 +87,51 @@ export function extractText(item: MessageItem): string {
  */
 export function extractFirstImageUrl(items?: MessageItem[]): MessageItem | undefined {
   return items?.find((item) => item.type === MessageItemType.IMAGE);
+}
+
+/**
+ * Find the first FILE type item in a list.
+ */
+export function extractFirstFileItem(items?: MessageItem[]): MessageItem | undefined {
+  return items?.find((item) => item.type === MessageItemType.FILE);
+}
+
+/**
+ * Download a CDN file, decrypt it, and save to a temp directory.
+ * Returns the local file path, or null on failure.
+ */
+export async function downloadFile(item: MessageItem): Promise<string | null> {
+  const fileItem = item.file_item;
+  if (!fileItem) return null;
+
+  let aesKey: string | undefined;
+  let encryptQueryParam: string | undefined;
+
+  if (fileItem.media?.encrypt_query_param) {
+    encryptQueryParam = fileItem.media.encrypt_query_param;
+    aesKey = fileItem.media.aes_key;
+  } else if (fileItem.cdn_media?.encrypt_query_param) {
+    encryptQueryParam = fileItem.cdn_media.encrypt_query_param;
+    aesKey = fileItem.cdn_media.aes_key;
+  }
+
+  if (!encryptQueryParam || !aesKey) {
+    logger.warn('File item has no usable CDN data');
+    return null;
+  }
+
+  try {
+    const decrypted = await downloadAndDecrypt(encryptQueryParam, aesKey);
+    const tmpDir = path.join(os.tmpdir(), 'wechat-claude-code');
+    fs.mkdirSync(tmpDir, { recursive: true });
+    const fileName = fileItem.file_name || `file-${Date.now()}.bin`;
+    const filePath = path.join(tmpDir, fileName);
+    fs.writeFileSync(filePath, decrypted);
+    logger.info('File downloaded and saved', { path: filePath, size: decrypted.length, name: fileName });
+    return filePath;
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    logger.warn('Failed to download file', { error: msg });
+    return null;
+  }
 }

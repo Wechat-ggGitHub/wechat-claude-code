@@ -1,7 +1,7 @@
 import { createInterface } from 'node:readline';
 import process from 'node:process';
 import { spawnSync } from 'node:child_process';
-import { join } from 'node:path';
+import { join, basename } from 'node:path';
 import { unlinkSync, writeFileSync, mkdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 
@@ -10,7 +10,7 @@ import { saveAccount, loadLatestAccount, type AccountData } from './wechat/accou
 import { startQrLogin, waitForQrScan } from './wechat/login.js';
 import { createMonitor, type MonitorCallbacks } from './wechat/monitor.js';
 import { createSender } from './wechat/send.js';
-import { downloadImage, extractText, extractFirstImageUrl } from './wechat/media.js';
+import { downloadImage, extractText, extractFirstImageUrl, extractFirstFileItem, downloadFile } from './wechat/media.js';
 import { createSessionStore, type Session } from './session.js';
 import { routeCommand, type CommandContext, type CommandResult } from './commands/router.js';
 import { claudeQuery, type QueryOptions } from './claude/provider.js';
@@ -241,6 +241,7 @@ async function handleMessage(
   // Extract text from items
   const userText = extractTextFromItems(msg.item_list);
   const imageItem = extractFirstImageUrl(msg.item_list);
+  const fileItem = extractFirstFileItem(msg.item_list);
 
   // Concurrency guard: abort current query when new message arrives
   if (session.state === 'processing') {
@@ -285,7 +286,7 @@ async function handleMessage(
 
     if (result.handled && result.claudePrompt) {
       await sendToClaude(
-        result.claudePrompt, imageItem, fromUserId, contextToken,
+        result.claudePrompt, imageItem, fileItem, fromUserId, contextToken,
         account, session, sessionStore, sender, config, activeControllers,
       );
       return;
@@ -298,13 +299,13 @@ async function handleMessage(
 
   // -- Normal message -> Claude --
 
-  if (!userText && !imageItem) {
-    await sender.sendText(fromUserId, contextToken, '暂不支持此类型消息，请发送文字、语音或图片');
+  if (!userText && !imageItem && !fileItem) {
+    await sender.sendText(fromUserId, contextToken, '暂不支持此类型消息，请发送文字、语音、图片或文件');
     return;
   }
 
   await sendToClaude(
-    userText, imageItem, fromUserId, contextToken,
+    userText, imageItem, fileItem, fromUserId, contextToken,
     account, session, sessionStore, sender, config, activeControllers,
   );
 }
@@ -316,6 +317,7 @@ function extractTextFromItems(items: NonNullable<WeixinMessage['item_list']>): s
 async function sendToClaude(
   userText: string,
   imageItem: ReturnType<typeof extractFirstImageUrl>,
+  fileItem: ReturnType<typeof extractFirstFileItem>,
   fromUserId: string,
   contextToken: string,
   account: AccountData,
@@ -361,6 +363,18 @@ async function sendToClaude(
       }
     }
 
+    // Download file if present
+    let prompt = userText || '请分析这张图片';
+    if (fileItem) {
+      const filePath = await downloadFile(fileItem);
+      if (filePath) {
+        const fileName = fileItem.file_item?.file_name || basename(filePath);
+        prompt = userText
+          ? `${userText}\n\n用户发送了文件: ${fileName}\n文件已保存到: ${filePath}\n请先读取这个文件再回答。`
+          : `用户发送了文件: ${fileName}\n文件已保存到: ${filePath}\n请读取这个文件并总结其内容。`;
+      }
+    }
+
     let textBuffer = '';
     let anySent = false;
 
@@ -377,7 +391,7 @@ async function sendToClaude(
     }
 
     const queryOptions: QueryOptions = {
-      prompt: userText || '请分析这张图片',
+      prompt,
       cwd: (session.workingDirectory || config.workingDirectory).replace(/^~/, homedir()),
       resume: session.sdkSessionId,
       model: session.model,

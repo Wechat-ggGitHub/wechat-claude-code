@@ -53,8 +53,10 @@ export interface VoiceItem {
 }
 
 export interface FileItem {
-  cdn_media: CDNMedia;
+  cdn_media?: CDNMedia;
+  media?: { encrypt_query_param: string; aes_key?: string };
   file_name?: string;
+  len?: string;
 }
 
 export interface VideoItem {
