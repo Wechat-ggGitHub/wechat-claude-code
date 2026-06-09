@@ -524,7 +524,10 @@ async function sendToClaude(
       cwd: (session.workingDirectory || config.workingDirectory).replace(/^~/, homedir()),
       resume: session.sdkSessionId,
       model: session.model,
-      systemPrompt: config.systemPrompt,
+      systemPrompt: [
+        '你正在通过微信与用户对话，不是在终端里。不要让用户去终端操作。如果用户需要文件，直接输出文件地址就行，会自动识别解析推送文件到用户的微信中。',
+        config.systemPrompt,
+      ].filter(Boolean).join('\n'),
       abortController,
       images,
       onText: async (delta: string) => {
@@ -594,8 +597,6 @@ async function sendToClaude(
         return AUTO_PUSH_EXTENSIONS.has(ext) && existsSync(f);
       });
       if (pushable.length > 0) {
-        const fileList = pushable.map(f => `- ${f.split('/').pop()}`).join('\n');
-        await sender.sendText(fromUserId, contextToken, `Claude 创建了文件，正在推送:\n${fileList}`);
         for (const filePath of pushable) {
           await sender.sendFile(fromUserId, contextToken, filePath);
         }
