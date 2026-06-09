@@ -40,7 +40,7 @@ export interface ImageItem {
   cdn_media?: CDNMedia;
   /** Alternative field name used by some API versions */
   aeskey?: string;
-  media?: { encrypt_query_param: string; aes_key?: string };
+  media?: { encrypt_query_param: string; aes_key?: string; encrypt_type?: number };
   url?: string;
   mid_size?: number;
   hd_size?: number;
@@ -54,7 +54,7 @@ export interface VoiceItem {
 
 export interface FileItem {
   cdn_media?: CDNMedia;
-  media?: { encrypt_query_param: string; aes_key?: string };
+  media?: { encrypt_query_param: string; aes_key?: string; encrypt_type?: number };
   file_name?: string;
   len?: string;
 }
@@ -137,15 +137,30 @@ export interface GetConfigResp {
 
 // ── GetUploadUrl API ────────────────────────────────────────────────────────
 
+export const UploadMediaType = {
+  IMAGE: 1,
+  VIDEO: 2,
+  FILE: 3,
+  VOICE: 4,
+} as const;
+
 export interface GetUploadUrlReq {
-  file_type: string;
-  file_size: number;
-  file_name: string;
+  filekey: string;
+  media_type: number;
+  to_user_id: string;
+  rawsize: number;
+  rawfilemd5: string;
+  filesize: number;
+  no_need_thumb: boolean;
+  aeskey: string;
+  base_info: {
+    channel_version: string;
+    bot_agent: string;
+  };
 }
 
 export interface GetUploadUrlResp {
-  errcode: number;
-  url: string;
-  aes_key: string;
-  encrypt_query_param: string;
+  ret?: number;
+  upload_param?: string;
+  upload_full_url?: string;
 }

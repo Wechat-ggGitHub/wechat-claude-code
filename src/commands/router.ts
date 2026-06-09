@@ -1,7 +1,7 @@
 import type { Session } from '../session.js';
 import { findSkill } from '../claude/skill-scanner.js';
 import { logger } from '../logger.js';
-import { handleHelp, handleClear, handleCwd, handleModel, handleStatus, handleSkills, handleHistory, handleReset, handleCompact, handleUndo, handleVersion, handlePrompt, handleUnknown } from './handlers.js';
+import { handleHelp, handleClear, handleCwd, handleModel, handleStatus, handleSkills, handleHistory, handleReset, handleCompact, handleUndo, handleVersion, handlePrompt, handleSend, handleUnknown } from './handlers.js';
 
 export interface CommandContext {
   accountId: string;
@@ -15,7 +15,8 @@ export interface CommandContext {
 export interface CommandResult {
   reply?: string;
   handled: boolean;
-  claudePrompt?: string; // If set, this text should be sent to Claude
+  claudePrompt?: string;
+  sendFile?: string; // Absolute path to a file to send to the user
 }
 
 /**
@@ -65,6 +66,8 @@ export function routeCommand(ctx: CommandContext): CommandResult {
       return handleUndo(ctx, args);
     case 'compact':
       return handleCompact(ctx);
+    case 'send':
+      return handleSend(ctx, args);
     case 'version':
     case 'v':
       return handleVersion();

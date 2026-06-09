@@ -2,8 +2,9 @@ import type { CommandContext, CommandResult } from './router.js';
 import { scanAllSkills, formatSkillList, findSkill, type SkillInfo } from '../claude/skill-scanner.js';
 import { loadConfig, saveConfig } from '../config.js';
 import { DEFAULT_WORKING_DIR } from '../constants.js';
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { readFileSync, existsSync, statSync } from 'node:fs';
+import { resolve, basename, join } from 'node:path';
+import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 
 const HELP_TEXT = `可用命令：
@@ -17,6 +18,9 @@ const HELP_TEXT = `可用命令：
   /compact          压缩上下文（开始新 SDK 会话，保留历史）
   /history [数量]   查看对话记录（默认最近20条）
   /undo [数量]      撤销最近对话（默认1条）
+
+文件：
+  /send <路径>      发送本地文件（图片直接显示，其他文件作为附件）
 
 配置：
   /cwd [路径]       查看或切换工作目录
@@ -187,6 +191,30 @@ export function handlePrompt(_ctx: CommandContext, args: string): CommandResult 
   config.systemPrompt = args.trim();
   saveConfig(config);
   return { reply: `✅ 系统提示词已设置:\n${config.systemPrompt}`, handled: true };
+}
+
+export function handleSend(ctx: CommandContext, args: string): CommandResult {
+  if (!args) {
+    return { reply: '用法: /send <文件路径>\n例: /send ~/Documents/report.pdf\n     /send ./chart.png', handled: true };
+  }
+
+  const resolved = args.startsWith('/')
+    ? args
+    : resolve(ctx.session.workingDirectory, args.replace(/^~/, homedir()));
+  if (!existsSync(resolved)) {
+    return { reply: `文件不存在: ${resolved}`, handled: true };
+  }
+
+  const stat = statSync(resolved);
+  if (stat.isDirectory()) {
+    return { reply: `这是一个目录，请指定文件: ${resolved}`, handled: true };
+  }
+
+  if (stat.size > 25 * 1024 * 1024) {
+    return { reply: `文件过大 (${(stat.size / 1024 / 1024).toFixed(1)}MB)，最大支持 25MB`, handled: true };
+  }
+
+  return { handled: true, sendFile: resolved };
 }
 
 export function handleUnknown(cmd: string, args: string): CommandResult {

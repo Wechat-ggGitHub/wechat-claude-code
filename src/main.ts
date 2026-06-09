@@ -25,6 +25,31 @@ import { MessageType, type WeixinMessage } from './wechat/types.js';
 
 const MAX_MESSAGE_LENGTH = 2048;
 
+// Extensions eligible for auto-push when detected in Claude's response
+const AUTO_PUSH_EXTENSIONS = new Set([
+  '.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.svg', '.ico',
+  '.pdf', '.doc', '.docx', '.ppt', '.pptx', '.rtf',
+  '.txt', '.md',
+  '.csv', '.xlsx', '.xls',
+  '.mp3', '.wav', '.m4a', '.mp4', '.mov',
+]);
+
+/** Extract local file paths from Claude's response text. */
+function extractFilePathsFromText(text: string, cwd: string): string[] {
+  const paths: string[] = [];
+  // Match absolute paths (macOS/Linux) and tilde paths with a file extension
+  const regex = /(?:\/(?:Users|home|tmp|var|etc)\/[^\s`'"()\[\]{}|<>]+\.\w+|~\/[^\s`'"()\[\]{}|<>]+\.\w+)/g;
+  let match: RegExpExecArray | null;
+  while ((match = regex.exec(text)) !== null) {
+    const raw = match[0];
+    const resolved = raw.startsWith('~')
+      ? raw.replace(/^~/, homedir())
+      : raw;
+    paths.push(resolved);
+  }
+  return paths;
+}
+
 /** Split text into blocks at paragraph boundaries (double newlines). */
 function parseBlocks(text: string): string[] {
   return text.split(/\n\n+/).filter(block => block.length > 0);
@@ -354,6 +379,11 @@ async function handleMessage(
       return;
     }
 
+    if (result.handled && result.sendFile) {
+      await sender.sendFile(fromUserId, contextToken, result.sendFile);
+      return;
+    }
+
     if (result.handled) return;
 
     // Not handled, treat as normal message (fall through)
@@ -552,6 +582,25 @@ async function sendToClaude(
     session.sdkSessionId = result.sessionId || undefined;
     session.state = 'idle';
     sessionStore.save(account.accountId, session);
+
+    // Auto-push deliverable files mentioned in Claude's response
+    if (result.text) {
+      const cwd = (session.workingDirectory || config.workingDirectory).replace(/^~/, homedir());
+      const detectedPaths = extractFilePathsFromText(result.text, cwd);
+      const { existsSync } = await import('node:fs');
+      const { extname } = await import('node:path');
+      const pushable = detectedPaths.filter(f => {
+        const ext = extname(f).toLowerCase();
+        return AUTO_PUSH_EXTENSIONS.has(ext) && existsSync(f);
+      });
+      if (pushable.length > 0) {
+        const fileList = pushable.map(f => `- ${f.split('/').pop()}`).join('\n');
+        await sender.sendText(fromUserId, contextToken, `Claude 创建了文件，正在推送:\n${fileList}`);
+        for (const filePath of pushable) {
+          await sender.sendFile(fromUserId, contextToken, filePath);
+        }
+      }
+    }
   } catch (err) {
     const isAbort = err instanceof Error && (err.name === 'AbortError' || err.message.includes('abort'));
     if (isAbort) {

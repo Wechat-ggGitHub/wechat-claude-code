@@ -145,14 +145,7 @@ export class WeChatApi {
   }
 
   /** Get a presigned upload URL for media files. */
-  async getUploadUrl(
-    fileType: string,
-    fileSize: number,
-    fileName: string,
-  ): Promise<GetUploadUrlResp> {
-    return this.request<GetUploadUrlResp>(
-      'ilink/bot/getuploadurl',
-      { file_type: fileType, file_size: fileSize, file_name: fileName },
-    );
+  async getUploadUrl(req: import('./types.js').GetUploadUrlReq): Promise<GetUploadUrlResp> {
+    return this.request<GetUploadUrlResp>('ilink/bot/getuploadurl', req);
   }
 }
