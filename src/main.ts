@@ -509,17 +509,15 @@ async function sendToClaude(
       flushChain = flushChain.then(async () => {
         const toSend = textBuffer.trim();
         if (!toSend) return;
+        textBuffer = '';
         const chunks = splitMessage(toSend);
-        // Only clear buffer after successful send to avoid message loss
         for (const chunk of chunks) {
+          anySent = true;
+          lastSentTime = Date.now();
           await sender.sendText(fromUserId, contextToken, chunk);
         }
-        textBuffer = '';
-        anySent = true;
-        lastSentTime = Date.now();
       }).catch((err) => {
         logger.error('flushText send failed', { error: err instanceof Error ? err.message : String(err) });
-        // Leave textBuffer intact so failed content can be retried on next flush
       });
       return flushChain;
     }

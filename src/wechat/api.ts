@@ -112,22 +112,18 @@ export class WeChatApi {
       }
     }
 
-    const MAX_RETRIES = 4;
-    let delay = 5_000;
+    const MAX_RETRIES = 2;
+    let delay = 3_000;
     for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
       const res = await this.request<{ ret?: number }>('ilink/bot/sendmessage', req);
       if (res.ret === -2) {
-        // Push back nextSendTime to prevent cascade: subsequent sends wait longer
-        if (userId) {
-          this.nextSendTime.set(userId, Date.now() + delay + WeChatApi.MIN_SEND_INTERVAL);
-        }
         if (attempt === MAX_RETRIES) {
           logger.warn('sendMessage rate-limited after max retries', { attempts: MAX_RETRIES });
-          throw new Error(`sendMessage rate-limited after ${MAX_RETRIES} retries`);
+          return;
         }
         logger.warn('sendMessage rate-limited (ret:-2), retrying', { attempt, delayMs: delay });
         await new Promise(r => setTimeout(r, delay));
-        delay = Math.min(delay * 2, 30_000);
+        delay = Math.min(delay * 2, 15_000);
         continue;
       }
       return;
