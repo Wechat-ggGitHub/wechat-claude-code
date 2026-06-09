@@ -515,7 +515,7 @@ async function sendToClaude(
       // Send a keepalive if nothing was sent for 5 minutes
       if (!silenceWarned && Date.now() - lastSentTime > SILENCE_WARNING_MS) {
         silenceWarned = true;
-        sender.sendText(fromUserId, contextToken, '我还在处理，请稍后').catch(() => {});
+        sender.sendText(fromUserId, contextToken, '我还在处理，请稍等一下').catch(() => {});
       }
     }, 2000);
 
