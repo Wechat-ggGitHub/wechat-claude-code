@@ -25,8 +25,13 @@ import { MessageType, type WeixinMessage } from './wechat/types.js';
 
 const MAX_MESSAGE_LENGTH = 2048;
 
-function splitMessage(text: string, maxLen: number = MAX_MESSAGE_LENGTH): string[] {
-  if (text.length <= maxLen) return [text];
+/** Split text into blocks at paragraph boundaries (double newlines). */
+function parseBlocks(text: string): string[] {
+  return text.split(/\n\n+/).filter(block => block.length > 0);
+}
+
+/** Fallback: split a single oversized block at newline boundaries. */
+function splitByNewline(text: string, maxLen: number): string[] {
   const chunks: string[] = [];
   let remaining = text;
   while (remaining.length > 0) {
@@ -34,7 +39,6 @@ function splitMessage(text: string, maxLen: number = MAX_MESSAGE_LENGTH): string
       chunks.push(remaining);
       break;
     }
-    // Try to split at a newline near the limit
     let splitIdx = remaining.lastIndexOf('\n', maxLen);
     if (splitIdx < maxLen * 0.3) {
       splitIdx = maxLen;
@@ -42,6 +46,42 @@ function splitMessage(text: string, maxLen: number = MAX_MESSAGE_LENGTH): string
     chunks.push(remaining.slice(0, splitIdx));
     remaining = remaining.slice(splitIdx).replace(/^\n+/, '');
   }
+  return chunks;
+}
+
+/**
+ * Card-aware message splitter.
+ * Splits at paragraph boundaries (double newlines) to keep cards intact,
+ * falls back to newline-based splitting for oversized single blocks.
+ */
+function splitMessage(text: string, maxLen: number = MAX_MESSAGE_LENGTH): string[] {
+  if (text.length <= maxLen) return [text];
+  const blocks = parseBlocks(text);
+  const chunks: string[] = [];
+  let current = '';
+
+  for (const block of blocks) {
+    // Can this block fit into the current chunk?
+    if (current.length === 0) {
+      if (block.length <= maxLen) {
+        current = block;
+      } else {
+        chunks.push(...splitByNewline(block, maxLen));
+      }
+    } else if (current.length + 2 + block.length <= maxLen) {
+      current += '\n\n' + block;
+    } else {
+      // Current chunk is complete, start a new one
+      chunks.push(current);
+      if (block.length <= maxLen) {
+        current = block;
+      } else {
+        chunks.push(...splitByNewline(block, maxLen));
+        current = '';
+      }
+    }
+  }
+  if (current) chunks.push(current);
   return chunks;
 }
 
@@ -403,6 +443,16 @@ async function sendToClaude(
     let anySent = false;
     let flushing = false;
     let lastSentTime = Date.now();
+    let lastBufferChangeTime = Date.now();
+
+    const MIN_FLUSH_LEN = 200;
+    const SOFT_FLUSH_LIMIT = 1800;
+    const MAX_BUFFER_AGE_MS = 5000;
+
+    /** Check if buffer ends at a structural boundary (double newline or horizontal rule). */
+    function endsWithStructuralBoundary(text: string): boolean {
+      return /\n\n\s*$/.test(text) || /\n[-*_]{3,}\s*$/.test(text);
+    }
 
     // Send accumulated text output
     async function flushText(): Promise<void> {
@@ -410,6 +460,7 @@ async function sendToClaude(
       flushing = true;
       const toSend = textBuffer.trim();
       textBuffer = '';
+      lastBufferChangeTime = Date.now();
       try {
         const chunks = splitMessage(toSend);
         for (const chunk of chunks) {
@@ -422,18 +473,20 @@ async function sendToClaude(
       }
     }
 
-    // Periodically flush streamed text to WeChat during query
-    const FLUSH_INTERVAL_MS = 3000;
+    // Safety net: flush stale buffers that haven't been sent due to no structural boundary
     const SILENCE_WARNING_MS = 5 * 60 * 1000;
     let silenceWarned = false;
     flushTimer = setInterval(() => {
-      flushText();
+      // Only flush when buffer is stale (no new content for MAX_BUFFER_AGE_MS)
+      if (textBuffer.length > MIN_FLUSH_LEN && Date.now() - lastBufferChangeTime > MAX_BUFFER_AGE_MS) {
+        flushText();
+      }
       // Send a keepalive if nothing was sent for 5 minutes
       if (!silenceWarned && Date.now() - lastSentTime > SILENCE_WARNING_MS) {
         silenceWarned = true;
         sender.sendText(fromUserId, contextToken, '我还在处理，请稍后').catch(() => {});
       }
-    }, FLUSH_INTERVAL_MS);
+    }, 2000);
 
     const queryOptions: QueryOptions = {
       prompt,
@@ -445,6 +498,16 @@ async function sendToClaude(
       images,
       onText: async (delta: string) => {
         textBuffer += delta;
+        lastBufferChangeTime = Date.now();
+
+        // Flush at structural boundaries or when approaching size limit
+        const shouldFlush =
+          (endsWithStructuralBoundary(textBuffer) && textBuffer.length > MIN_FLUSH_LEN)
+          || textBuffer.length > SOFT_FLUSH_LIMIT;
+
+        if (shouldFlush) {
+          await flushText();
+        }
       },
     };
 
