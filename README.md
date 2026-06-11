@@ -58,7 +58,7 @@ npm run setup
 npm run daemon -- start
 ```
 
-macOS 下自动注册 launchd，开机自启、崩溃自动重启。
+macOS 下自动注册 launchd，Linux 下使用 systemd，Windows 下使用后台进程。均支持开机自启、崩溃自动重启。
 
 ### 3. 开始聊天
 
@@ -110,7 +110,7 @@ npm run daemon -- logs     # 查看日志
 ## 前置条件
 
 - Node.js >= 18
-- macOS 或 Linux
+- macOS、Linux 或 Windows
 - 个人微信账号
 - 已安装 [Claude Code](https://docs.anthropic.com/en/docs/claude-code) CLI 并完成认证
 

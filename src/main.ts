@@ -37,8 +37,8 @@ const AUTO_PUSH_EXTENSIONS = new Set([
 /** Extract local file paths from Claude's response text. */
 function extractFilePathsFromText(text: string, cwd: string): string[] {
   const paths: string[] = [];
-  // Match absolute paths (macOS/Linux) and tilde paths with a file extension
-  const regex = /(?:\/(?:Users|home|tmp|var|etc)\/[^\s`'"()\[\]{}|<>]+\.\w+|~\/[^\s`'"()\[\]{}|<>]+\.\w+)/g;
+  // Match absolute paths (macOS/Linux), Windows paths, and tilde paths with a file extension
+  const regex = /(?:\/(?:Users|home|tmp|var|etc)\/[^\s`'"()\[\]{}|<>]+\.\w+|~\/[^\s`'"()\[\]{}|<>]+\.\w+|[A-Za-z]:[\\\/][^\s`'"()\[\]{}|<>]+\.\w+)/g;
   let match: RegExpExecArray | null;
   while ((match = regex.exec(text)) !== null) {
     const raw = match[0];
