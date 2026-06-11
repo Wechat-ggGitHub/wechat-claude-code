@@ -721,7 +721,10 @@ function main() {
     writeFileSync(output, html, 'utf-8');
     console.log(`Written to: ${output}`);
     if (open) {
-      execSync(`open "${output}"`);
+      const cmd = process.platform === 'darwin' ? 'open'
+        : process.platform === 'win32' ? 'cmd /c start ""'
+        : 'xdg-open';
+      execSync(`${cmd} "${output}"`);
     }
   } else {
     process.stdout.write(html);

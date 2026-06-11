@@ -1,4 +1,5 @@
 import { existsSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { resolve } from 'node:path';
 import { WeChatApi } from './api.js';
 import { MessageItemType, MessageType, MessageState, TypingStatus, type MessageItem, type OutboundMessage } from './types.js';
@@ -115,7 +116,7 @@ export function createSender(api: WeChatApi, botAccountId: string) {
   }
 
   async function sendFile(toUserId: string, contextToken: string, filePath: string): Promise<void> {
-    const resolved = resolve(filePath.replace(/^~/, process.env.HOME || ''));
+    const resolved = resolve(filePath.replace(/^~/, homedir()));
     if (!existsSync(resolved)) {
       await sendText(toUserId, contextToken, `文件不存在: ${resolved}`);
       return;
