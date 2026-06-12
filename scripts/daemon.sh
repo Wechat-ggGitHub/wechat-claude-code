@@ -376,6 +376,114 @@ linux_logs() {
 }
 
 # =============================================================================
+# Windows (Git Bash / MINGW) functions
+# =============================================================================
+
+windows_pid_file() {
+  echo "${DATA_DIR}/${SERVICE_NAME}.pid"
+}
+
+windows_start() {
+  local pid_file="$(windows_pid_file)"
+  local node_bin="$(command -v node 2>/dev/null || echo 'node')"
+
+  if [ -f "$pid_file" ]; then
+    local old_pid=$(cat "$pid_file" 2>/dev/null)
+    if [ -n "$old_pid" ] && kill -0 "$old_pid" 2>/dev/null; then
+      echo "Already running (PID: $old_pid)"
+      exit 0
+    fi
+    rm -f "$pid_file"
+  fi
+
+  mkdir -p "$DATA_DIR/logs"
+
+  echo "Starting wechat-claude-code daemon (Windows)..."
+  nohup "$node_bin" "${PROJECT_DIR}/dist/main.js" start \
+    >> "$DATA_DIR/logs/stdout.log" \
+    2>> "$DATA_DIR/logs/stderr.log" &
+  local pid=$!
+  echo "$pid" > "$pid_file"
+  echo "Started (PID: $pid)"
+  echo "Logs: $DATA_DIR/logs/stdout.log"
+}
+
+windows_stop() {
+  local pid_file="$(windows_pid_file)"
+
+  if [ ! -f "$pid_file" ]; then
+    echo "Not running (no PID file)"
+    exit 0
+  fi
+
+  local pid=$(cat "$pid_file" 2>/dev/null)
+  if [ -z "$pid" ]; then
+    rm -f "$pid_file"
+    echo "Stopped"
+    exit 0
+  fi
+
+  if kill -0 "$pid" 2>/dev/null; then
+    kill "$pid" 2>/dev/null || true
+    local count=0
+    while kill -0 "$pid" 2>/dev/null && [ $count -lt 10 ]; do
+      sleep 1
+      count=$((count + 1))
+    done
+    # Fallback: use taskkill if process still alive
+    if kill -0 "$pid" 2>/dev/null; then
+      taskkill //F //PID "$pid" 2>/dev/null || true
+    fi
+    echo "Stopped (PID: $pid)"
+  else
+    echo "Process not running (cleaning up PID file)"
+  fi
+
+  rm -f "$pid_file"
+}
+
+windows_status() {
+  local pid_file="$(windows_pid_file)"
+
+  if [ ! -f "$pid_file" ]; then
+    echo "Not running"
+    exit 0
+  fi
+
+  local pid=$(cat "$pid_file" 2>/dev/null)
+  if [ -z "$pid" ]; then
+    echo "Not running (invalid PID file)"
+    exit 0
+  fi
+
+  if kill -0 "$pid" 2>/dev/null; then
+    echo "Running (PID: $pid)"
+  else
+    echo "Not running (stale PID file)"
+  fi
+}
+
+windows_logs() {
+  local log_dir="${DATA_DIR}/logs"
+  if [ -d "$log_dir" ]; then
+    local latest=$(ls -t "${log_dir}"/bridge-*.log 2>/dev/null | head -1)
+    if [ -n "$latest" ]; then
+      tail -100 "$latest"
+    else
+      for f in "${log_dir}"/stdout.log "${log_dir}"/stderr.log; do
+        if [ -f "$f" ]; then
+          echo "=== $(basename "$f") ==="
+          tail -50 "$f"
+          echo ""
+        fi
+      done
+    fi
+  else
+    echo "No logs found"
+  fi
+}
+
+# =============================================================================
 # Main dispatcher
 # =============================================================================
 
@@ -411,9 +519,23 @@ main() {
           ;;
       esac
       ;;
+    MINGW*|MSYS*|CYGWIN*)
+      case "$command" in
+        start)   windows_start ;;
+        stop)    windows_stop ;;
+        restart) windows_stop; sleep 1; windows_start ;;
+        status)  windows_status ;;
+        logs)    windows_logs ;;
+        *)
+          echo "Usage: daemon.sh {start|stop|restart|status|logs}"
+          echo "Platform: Windows (Git Bash)"
+          exit 1
+          ;;
+      esac
+      ;;
     *)
       echo "Error: Unsupported platform '$OS_TYPE'"
-      echo "Supported platforms: macOS (Darwin), Linux"
+      echo "Supported platforms: macOS (Darwin), Linux, Windows (MINGW/MSYS)"
       exit 1
       ;;
   esac

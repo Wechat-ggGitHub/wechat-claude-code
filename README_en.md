@@ -121,7 +121,7 @@ The daemon long-polls WeChat for new messages, forwards them to the local `claud
 ## Prerequisites
 
 - Node.js >= 18
-- macOS or Linux
+- macOS, Windows, or Linux
 - A personal WeChat account
 - [Claude Code](https://docs.anthropic.com/en/docs/claude-code) CLI installed and authenticated
 

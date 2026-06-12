@@ -110,7 +110,7 @@ npm run daemon -- logs     # 查看日志
 ## 前置条件
 
 - Node.js >= 18
-- macOS 或 Linux
+- macOS、Windows 或 Linux
 - 个人微信账号
 - 已安装 [Claude Code](https://docs.anthropic.com/en/docs/claude-code) CLI 并完成认证
 
