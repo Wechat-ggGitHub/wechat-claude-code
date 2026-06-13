@@ -399,6 +399,14 @@ async function handleMessage(
       return;
     }
 
+    if (result.handled && result.compactSession) {
+      await compactSession(
+        fromUserId, contextToken,
+        account, session, sessionStore, sender, config,
+      );
+      return;
+    }
+
     if (result.handled && result.sendFile) {
       await sender.sendFile(fromUserId, contextToken, result.sendFile);
       return;
@@ -424,6 +432,58 @@ async function handleMessage(
 
 function extractTextFromItems(items: NonNullable<WeixinMessage['item_list']>): string {
   return items.map((item) => extractText(item)).filter(Boolean).join('\n');
+}
+
+async function compactSession(
+  fromUserId: string,
+  contextToken: string,
+  account: AccountData,
+  session: Session,
+  sessionStore: ReturnType<typeof createSessionStore>,
+  sender: ReturnType<typeof createSender>,
+  config: ReturnType<typeof loadConfig>,
+): Promise<void> {
+  const stopTyping = sender.startTyping(fromUserId, contextToken);
+  try {
+    await sender.sendText(fromUserId, contextToken, '⏳ 正在压缩上下文，请稍候（通常需要1-2分钟）...');
+
+    const cwd = (session.workingDirectory || config.workingDirectory).replace(/^~/, homedir());
+    const result = await claudeQuery({
+      prompt: '/compact',
+      cwd,
+      resume: session.sdkSessionId,
+      model: session.model,
+    });
+
+    // compact 完成后 session ID 不变，直接用 result.sessionId（和原来一样）
+    // 从 result.text 里不会有实际输出（compact 完成后 Claude 没有回复文字）
+    // 但 claudeQuery 内部能拿到 sessionId（来自 system/init）
+    if (result.error && !result.sessionId) {
+      await sender.sendText(fromUserId, contextToken, `❌ 压缩失败: ${result.error}`);
+      return;
+    }
+
+    // session ID 保持不变（compact 不会改变 session ID）
+    session.sdkSessionId = result.sessionId || session.sdkSessionId;
+    sessionStore.save(account.accountId, session);
+
+    // Parse compact stats from the sentinel we injected in provider.ts
+    let statsLine = '';
+    const compactMarker = result.text.match(/^__compact__:(\d+):(\d+)$/m);
+    if (compactMarker) {
+      const pre = parseInt(compactMarker[1], 10);
+      const post = parseInt(compactMarker[2], 10);
+      const pct = pre > 0 ? Math.round((1 - post / pre) * 100) : 0;
+      statsLine = `\n压缩前: ${pre.toLocaleString()} tokens → 压缩后: ${post.toLocaleString()} tokens（减少 ${pct}%）`;
+    }
+
+    await sender.sendText(fromUserId, contextToken, `✅ 上下文已压缩${statsLine}\n\nSession ID 不变，对话继续。可直接发送下一条消息。`);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    await sender.sendText(fromUserId, contextToken, `❌ 压缩出错: ${msg}`);
+  } finally {
+    stopTyping();
+  }
 }
 
 async function sendToClaude(
