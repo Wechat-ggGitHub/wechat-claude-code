@@ -379,7 +379,7 @@ async function handleMessage(
       accountId: account.accountId,
       session,
       updateSession,
-      clearSession: () => sessionStore.clear(account.accountId),
+      clearSession: () => sessionStore.clear(account.accountId, session),
       getChatHistoryText: (limit?: number) => sessionStore.getChatHistoryText(session, limit),
       text: userText,
     };
