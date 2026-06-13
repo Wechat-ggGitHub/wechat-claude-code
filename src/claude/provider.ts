@@ -184,6 +184,14 @@ export async function claudeQuery(options: QueryOptions): Promise<QueryResult> {
           if (obj.subtype === 'init' && obj.session_id) {
             sessionId = obj.session_id;
           }
+          // compact completed — treat empty result as success
+          if (obj.subtype === 'compact_boundary') {
+            const pre = obj.compact_metadata?.pre_tokens ?? 0;
+            const post = obj.compact_metadata?.post_tokens ?? 0;
+            if (pre > 0) {
+              textParts.push(`__compact__:${pre}:${post}`);
+            }
+          }
           break;
         }
         case 'assistant': {

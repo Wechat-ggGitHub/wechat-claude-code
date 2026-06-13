@@ -15,9 +15,11 @@ const HELP_TEXT = `可用命令：
   /clear            清除当前会话
   /reset            完全重置（包括工作目录等设置）
   /status           查看当前会话状态
-  /compact          压缩上下文（开始新 SDK 会话，保留历史）
+  /compact          压缩上下文（保持当前对话，大幅减少 token 占用）
   /history [数量]   查看对话记录（默认最近20条）
   /undo [数量]      撤销最近对话（默认1条）
+  /resume           列出当前目录的历史对话
+  /resume <编号>    恢复指定编号的历史对话
 
 文件：
   /send <路径>      发送本地文件（图片直接显示，其他文件作为附件）
@@ -130,20 +132,12 @@ export function handleReset(ctx: CommandContext): CommandResult {
   return { reply: '✅ 会话已完全重置，所有设置恢复默认。', handled: true };
 }
 
-/** 压缩上下文 — 清除 SDK 会话 ID，开始新上下文但保留聊天历史 */
+/** 压缩上下文 — 通过原生 /compact 命令压缩当前 session，保持 session ID 不变 */
 export function handleCompact(ctx: CommandContext): CommandResult {
-  const currentSessionId = ctx.session.sdkSessionId;
-  if (!currentSessionId) {
-    return { reply: 'ℹ️ 当前没有活动的 SDK 会话，无需压缩。', handled: true };
+  if (!ctx.session.sdkSessionId) {
+    return { reply: 'ℹ️ 当前没有活动的对话，无需压缩。', handled: true };
   }
-  ctx.updateSession({
-    previousSdkSessionId: currentSessionId,
-    sdkSessionId: undefined,
-  });
-  return {
-    reply: '✅ 上下文已压缩\n\n下次消息将开始新的 SDK 会话（token 清零）\n聊天历史已保留，可用 /history 查看',
-    handled: true,
-  };
+  return { handled: true, compactSession: true };
 }
 
 /** 撤销最近 N 条对话 */
@@ -215,6 +209,158 @@ export function handleSend(ctx: CommandContext, args: string): CommandResult {
   }
 
   return { handled: true, sendFile: resolved };
+}
+
+interface SessionIndexEntry {
+  sessionId: string;
+  fullPath: string;
+  summary: string;
+  firstPrompt: string;
+  created: string;
+  modified: string;
+  messageCount: number;
+  gitBranch: string;
+}
+
+interface SessionIndex {
+  version: number;
+  entries: SessionIndexEntry[];
+  originalPath: string;
+}
+
+function cwdToProjectSlug(cwd: string): string {
+  // Claude Code converts the full path to a slug by replacing every non-alphanumeric
+  // character (slashes, underscores, dots, etc.) with a hyphen.
+  // e.g. /Users/unknown_liang/Desktop/Code/atlas_v01
+  //   → -Users-unknown-liang-Desktop-Code-atlas-v01
+  return cwd.replace(/[^a-zA-Z0-9]/g, '-');
+}
+
+function extractSessionInfo(jsonlPath: string): { customTitle?: string; firstUserMessage?: string } {
+  if (!existsSync(jsonlPath)) return {};
+  try {
+    const lines = readFileSync(jsonlPath, 'utf-8').split('\n');
+    let customTitle: string | undefined;
+    let firstUserMessage: string | undefined;
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      let obj: any;
+      try { obj = JSON.parse(line); } catch { continue; }
+      // custom title set by /rename — keep updating to get the latest
+      if (obj.type === 'custom-title' && typeof obj.customTitle === 'string' && obj.customTitle.trim()) {
+        customTitle = obj.customTitle.trim();
+      }
+      // first real user message
+      if (!firstUserMessage && obj.type === 'user') {
+        const content = obj.message?.content;
+        if (typeof content === 'string' && content.trim().length > 5) {
+          firstUserMessage = content.trim();
+        } else if (Array.isArray(content)) {
+          for (const block of content) {
+            if (block?.type === 'text' && typeof block.text === 'string' && block.text.trim().length > 5) {
+              firstUserMessage = block.text.trim();
+              break;
+            }
+          }
+        }
+      }
+      // once we have firstUserMessage, we still need to scan for the latest customTitle
+      // so never break early here
+    }
+    return { customTitle, firstUserMessage };
+  } catch { /* ignore */ }
+  return {};
+}
+
+function loadSessionIndex(cwd: string): SessionIndexEntry[] {
+  const slug = cwdToProjectSlug(cwd.replace(/^~/, homedir()));
+  const indexPath = join(homedir(), '.claude', 'projects', slug, 'sessions-index.json');
+  if (!existsSync(indexPath)) return [];
+  try {
+    const data: SessionIndex = JSON.parse(readFileSync(indexPath, 'utf-8'));
+    return (data.entries || []).sort(
+      (a, b) => new Date(b.modified).getTime() - new Date(a.modified).getTime()
+    );
+  } catch {
+    return [];
+  }
+}
+
+function formatSessionLabel(entry: SessionIndexEntry, index: number): string {
+  const { customTitle, firstUserMessage } = extractSessionInfo(entry.fullPath);
+  // customTitle (from /rename) takes priority, then first user message, then summary
+  const raw = customTitle || firstUserMessage || entry.summary || '（无内容）';
+  const label = raw
+    .replace(/<[^>]+>[\s\S]*?<\/[^>]+>/g, '')
+    .replace(/<[^>]+>/g, '')
+    .trim()
+    .slice(0, 50);
+  const titleMark = customTitle ? `[${customTitle}] ` : '';
+  const displayLabel = customTitle
+    ? `[${customTitle}]`
+    : (firstUserMessage || entry.summary || '（无内容）')
+        .replace(/<[^>]+>[\s\S]*?<\/[^>]+>/g, '')
+        .replace(/<[^>]+>/g, '')
+        .trim()
+        .slice(0, 50);
+  const modified = new Date(entry.modified).toLocaleString('zh-CN', {
+    month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit',
+  });
+  const msgs = entry.messageCount;
+  return `${index + 1}. [${modified}] ${displayLabel} (${msgs}条)`;
+}
+
+export function handleResume(ctx: CommandContext, args: string): CommandResult {
+  const cwd = ctx.session.workingDirectory || DEFAULT_WORKING_DIR;
+
+  const entries = loadSessionIndex(cwd);
+  if (entries.length === 0) {
+    return { reply: `当前目录 ${cwd} 没有历史对话记录。`, handled: true };
+  }
+
+  // /resume 不带参数 — 列出会话列表
+  if (!args) {
+    const MAX_LIST = 15;
+    const shown = entries.slice(0, MAX_LIST);
+    const lines = shown.map((e, i) => formatSessionLabel(e, i));
+    const footer = entries.length > MAX_LIST ? `\n…共 ${entries.length} 条，仅显示最近 ${MAX_LIST} 条` : '';
+    return {
+      reply: `📋 历史对话（目录: ${cwd}）\n\n${lines.join('\n')}${footer}\n\n用 /resume <编号> 恢复，例: /resume 1`,
+      handled: true,
+    };
+  }
+
+  // /resume <编号> — 按编号恢复
+  const num = parseInt(args.trim(), 10);
+  if (!isNaN(num) && num >= 1 && num <= entries.length) {
+    const target = entries[num - 1];
+    const label = (target.summary || target.firstPrompt || target.sessionId).slice(0, 60);
+    ctx.updateSession({ sdkSessionId: target.sessionId });
+    return {
+      reply: `✅ 已切换到历史对话 #${num}\n摘要: ${label}\n时间: ${new Date(target.modified).toLocaleString('zh-CN')}\n\n发送下一条消息即可继续该对话。`,
+      handled: true,
+    };
+  }
+
+  // /resume <sessionId> — 按完整 UUID 恢复
+  const uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  if (uuidRe.test(args.trim())) {
+    const target = entries.find(e => e.sessionId === args.trim());
+    if (!target) {
+      return { reply: `未找到 sessionId: ${args.trim()}`, handled: true };
+    }
+    ctx.updateSession({ sdkSessionId: target.sessionId });
+    const label = (target.summary || target.firstPrompt || target.sessionId).slice(0, 60);
+    return {
+      reply: `✅ 已切换到历史对话\n摘要: ${label}\n时间: ${new Date(target.modified).toLocaleString('zh-CN')}\n\n发送下一条消息即可继续该对话。`,
+      handled: true,
+    };
+  }
+
+  return {
+    reply: `用法:\n  /resume          列出历史对话\n  /resume <编号>   恢复指定对话（编号来自列表）`,
+    handled: true,
+  };
 }
 
 export function handleUnknown(cmd: string, args: string): CommandResult {

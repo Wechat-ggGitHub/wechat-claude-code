@@ -1,7 +1,7 @@
 import type { Session } from '../session.js';
 import { findSkill } from '../claude/skill-scanner.js';
 import { logger } from '../logger.js';
-import { handleHelp, handleClear, handleCwd, handleModel, handleStatus, handleSkills, handleHistory, handleReset, handleCompact, handleUndo, handleVersion, handlePrompt, handleSend, handleUnknown } from './handlers.js';
+import { handleHelp, handleClear, handleCwd, handleModel, handleStatus, handleSkills, handleHistory, handleReset, handleCompact, handleUndo, handleVersion, handlePrompt, handleSend, handleResume, handleUnknown } from './handlers.js';
 
 export interface CommandContext {
   accountId: string;
@@ -17,6 +17,7 @@ export interface CommandResult {
   handled: boolean;
   claudePrompt?: string;
   sendFile?: string; // Absolute path to a file to send to the user
+  compactSession?: boolean; // Trigger a real /compact on the current session
 }
 
 /**
@@ -66,6 +67,8 @@ export function routeCommand(ctx: CommandContext): CommandResult {
       return handleUndo(ctx, args);
     case 'compact':
       return handleCompact(ctx);
+    case 'resume':
+      return handleResume(ctx, args);
     case 'send':
       return handleSend(ctx, args);
     case 'version':
