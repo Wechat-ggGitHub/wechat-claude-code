@@ -1,4 +1,5 @@
-import { spawn, type ChildProcess } from 'node:child_process';
+import crossSpawn from 'cross-spawn';
+import type { ChildProcess } from 'node:child_process';
 import { writeFileSync, unlinkSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -121,10 +122,11 @@ export async function claudeQuery(options: QueryOptions): Promise<QueryResult> {
     };
 
     try {
-      child = spawn('claude', args, {
+      child = crossSpawn('claude', args, {
         cwd,
         stdio: ['pipe', 'pipe', 'pipe'],
         env: { ...process.env },
+        windowsHide: true,
       });
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);

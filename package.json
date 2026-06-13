@@ -11,20 +11,31 @@
     "dev": "tsc --watch",
     "test": "node --test dist/tests/*.test.js",
     "setup": "node dist/main.js setup",
-    "daemon": "bash scripts/daemon.sh",
+    "daemon": "node scripts/daemon.js",
+    "daemon:unix": "bash scripts/daemon.sh",
+    "daemon:win": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/daemon.ps1",
     "visualize": "npx tsx src/tools/visualize-logs.ts"
   },
   "dependencies": {
-"qrcode": "^1.5.4",
+    "cross-spawn": "^7.0.6",
+    "qrcode": "^1.5.4",
     "qrcode-terminal": "^0.12.0"
   },
   "devDependencies": {
+    "@types/cross-spawn": "^6.0.6",
     "@types/node": "^22.0.0",
     "@types/qrcode": "^1.5.6",
     "@types/qrcode-terminal": "^0.12.0",
     "typescript": "^5.7.0"
   },
-  "keywords": ["wechat", "claude-code", "claude", "bridge", "chat", "skill"],
+  "keywords": [
+    "wechat",
+    "claude-code",
+    "claude",
+    "bridge",
+    "chat",
+    "skill"
+  ],
   "author": "Wechat-ggGitHub",
   "license": "MIT",
   "repository": {
