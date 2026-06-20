@@ -20,6 +20,11 @@ export class WeChatApi {
   private readonly uin: string;
   private readonly nextSendTime = new Map<string, number>();
   private static readonly MIN_SEND_INTERVAL = 2500;
+  // Cooldown applied after a rate-limit (ret:-2). Observed WeChat cooldown can
+  // last ~2-3 minutes under sustained sending; pushing nextSendTime this far
+  // out makes subsequent sends queue for the cooldown instead of each one
+  // independently hitting the wall and exhausting its own retries.
+  private static readonly RATE_LIMIT_COOLDOWN_MS = 60_000;
 
   constructor(token: string, baseUrl: string = 'https://ilinkai.weixin.qq.com') {
     if (baseUrl) {
@@ -118,7 +123,9 @@ export class WeChatApi {
       const res = await this.request<{ ret?: number }>('ilink/bot/sendmessage', req);
       if (res.ret === -2) {
         if (userId) {
-          this.nextSendTime.set(userId, Date.now() + delay + WeChatApi.MIN_SEND_INTERVAL);
+          // Push the per-user send clock past the observed cooldown window so
+          // later sends wait it out instead of retrying into the wall.
+          this.nextSendTime.set(userId, Date.now() + WeChatApi.RATE_LIMIT_COOLDOWN_MS);
         }
         if (attempt === MAX_RETRIES) {
           logger.warn('sendMessage rate-limited after max retries', { attempts: MAX_RETRIES });

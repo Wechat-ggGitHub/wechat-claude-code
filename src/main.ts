@@ -515,13 +515,25 @@ async function sendToClaude(
 
       flushChain = flushChain.then(async () => {
         const chunks = splitMessage(captured);
-        for (const chunk of chunks) {
-          await sender.sendText(fromUserId, contextToken, chunk);
+        for (let i = 0; i < chunks.length; i++) {
+          try {
+            await sender.sendText(fromUserId, contextToken, chunks[i]);
+          } catch (err) {
+            // Rate-limit exhaustion etc.: put the unsent chunks back at the
+            // front of the buffer so the next flush retries them. Content is
+            // never silently dropped (previously the for-loop aborted here and
+            // the already-cleared buffer lost everything from this chunk on).
+            const remaining = chunks.slice(i).join('\n\n');
+            textBuffer = remaining + (textBuffer ? '\n\n' + textBuffer : '');
+            logger.warn('flushText send failed, content retained for retry', {
+              error: err instanceof Error ? err.message : String(err),
+              retainedChunks: chunks.length - i,
+            });
+            return;
+          }
         }
         anySent = true;
         lastSentTime = Date.now();
-      }).catch((err) => {
-        logger.error('flushText send failed', { error: err instanceof Error ? err.message : String(err) });
       });
       return flushChain;
     }
