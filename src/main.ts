@@ -14,6 +14,7 @@ import { downloadImage, extractText, extractFirstImageUrl, extractFirstFileItem,
 import { createSessionStore, type Session } from './session.js';
 import { routeCommand, type CommandContext, type CommandResult } from './commands/router.js';
 import { claudeQuery, type QueryOptions } from './claude/provider.js';
+import { TurnRouter } from './claude/turn-router.js';
 import { loadConfig, saveConfig } from './config.js';
 import { logger } from './logger.js';
 import { DATA_DIR } from './constants.js';
@@ -490,42 +491,30 @@ async function sendToClaude(
       }
     }
 
-    let textBuffer = '';
     let anySent = false;
     let lastSentTime = Date.now();
+    let pendingRetry = '';   // sendText 失败时未发出的 chunks，下一次 flush 优先重试
 
-    const MIN_BATCH_FLUSH_LEN = 30;
-    const SOFT_FLUSH_LIMIT = 3800;
-
-    /** Check if buffer ends at a structural boundary (double newline or horizontal rule). */
-    function endsWithStructuralBoundary(text: string): boolean {
-      return /\n\n\s*$/.test(text) || /\n[-*_]{3,}\s*$/.test(text);
-    }
-
-    // Serial promise chain — each flushText() appends to the chain, no flags needed
+    // Serial promise chain — each emit appends to the chain, no flags needed
     let flushChain: Promise<void> = Promise.resolve();
 
-    function flushText(): Promise<void> {
-      // Capture and clear synchronously to prevent race condition:
-      // new deltas can arrive while the chain awaits sendText,
-      // causing the async callback to clear content it never captured.
-      const captured = textBuffer.trim();
-      textBuffer = '';
-      if (!captured) return flushChain;
-
+    /** 把一段文本切分后串行发到微信。失败时把未发的 chunks 攒到 pendingRetry，下次重试。 */
+    function emitText(text: string, role: 'interstitial' | 'final'): void {
+      if (!text.trim()) return;
       flushChain = flushChain.then(async () => {
-        const chunks = splitMessage(captured);
+        const combined = pendingRetry ? pendingRetry + '\n\n' + text : text;
+        pendingRetry = '';
+        if (!combined.trim()) return;
+        const chunks = splitMessage(combined);
         for (let i = 0; i < chunks.length; i++) {
           try {
             await sender.sendText(fromUserId, contextToken, chunks[i]);
           } catch (err) {
-            // Rate-limit exhaustion etc.: put the unsent chunks back at the
-            // front of the buffer so the next flush retries them. Content is
-            // never silently dropped (previously the for-loop aborted here and
-            // the already-cleared buffer lost everything from this chunk on).
-            const remaining = chunks.slice(i).join('\n\n');
-            textBuffer = remaining + (textBuffer ? '\n\n' + textBuffer : '');
-            logger.warn('flushText send failed, content retained for retry', {
+            // Rate-limit exhaustion etc.: put the unsent chunks back so the
+            // next emit retries them. Content is never silently dropped.
+            pendingRetry = chunks.slice(i).join('\n\n');
+            logger.warn('emitText send failed, content retained for retry', {
+              role,
               error: err instanceof Error ? err.message : String(err),
               retainedChunks: chunks.length - i,
             });
@@ -535,8 +524,9 @@ async function sendToClaude(
         anySent = true;
         lastSentTime = Date.now();
       });
-      return flushChain;
     }
+
+    const router = new TurnRouter((msg) => emitText(msg.text, msg.role));
 
     // Safety net: send keepalive if nothing was sent for 5 minutes
     const SILENCE_WARNING_MS = 5 * 60 * 1000;
@@ -571,22 +561,11 @@ async function sendToClaude(
       ].filter(Boolean).join('\n'),
       abortController,
       images,
-      onText: async (delta: string) => {
-        textBuffer += delta;
-
-        // Flush at structural boundaries (only if buffer is substantial) or when approaching size limit
-        const shouldFlush =
-          (endsWithStructuralBoundary(textBuffer) && textBuffer.trim().length >= MIN_BATCH_FLUSH_LEN)
-          || textBuffer.length > SOFT_FLUSH_LIMIT;
-
-        if (shouldFlush) {
-          await flushText();
-        }
+      onText: (delta: string) => {
+        router.onText(delta);
       },
-      onBlockEnd: () => {
-        if (textBuffer.trim().length >= MIN_BATCH_FLUSH_LEN || textBuffer.length > SOFT_FLUSH_LIMIT) {
-          flushText();
-        }
+      onTurnEnd: (stopReason: string) => {
+        router.onTurnEnd(stopReason);
       },
     };
 
@@ -602,9 +581,10 @@ async function sendToClaude(
       Object.assign(result, retryResult);
     }
 
-    // Stop periodic flush and send any remaining buffered content
+    // Stop periodic flush, drain router (final 先于 interstitial), wait for queued sends
     clearInterval(flushTimer);
-    await flushText();
+    router.drain();
+    await flushChain;
 
     // Send result back to WeChat
     if (result.text) {
