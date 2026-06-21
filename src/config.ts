@@ -1,7 +1,6 @@
 import { readFileSync, writeFileSync, mkdirSync, chmodSync } from "node:fs";
 import { join } from "node:path";
-import { homedir } from "node:os";
-import { DEFAULT_WORKING_DIR } from "./constants.js";
+import { DATA_DIR, DEFAULT_WORKING_DIR } from "./constants.js";
 
 export interface Config {
   workingDirectory: string;
@@ -9,7 +8,7 @@ export interface Config {
   systemPrompt?: string;
 }
 
-const CONFIG_DIR = join(homedir(), ".wechat-claude-code");
+const CONFIG_DIR = DATA_DIR;
 const CONFIG_PATH = join(CONFIG_DIR, "config.json");
 
 const DEFAULT_CONFIG: Config = {
