@@ -64,11 +64,22 @@ export function handleClear(ctx: CommandContext): CommandResult {
 }
 
 export function handleCwd(ctx: CommandContext, args: string): CommandResult {
-  if (!args) {
+  // 清理首尾的反引号/引号/空格：手机输入法或 markdown 代码格式常给路径自动加上这些
+  const cleaned = args.trim().replace(/^[`'"\s]+|[`'"\s]+$/g, '');
+  if (!cleaned) {
     return { reply: `当前工作目录: ${ctx.session.workingDirectory}\n用法: /cwd <路径>`, handled: true };
   }
-  ctx.updateSession({ workingDirectory: args });
-  return { reply: `✅ 工作目录已切换为: ${args}`, handled: true };
+  // 展开 ~ 并解析为绝对路径（相对路径基于当前工作目录），切换前校验目录确实存在
+  const expanded = cleaned.replace(/^~/, homedir());
+  const resolved = expanded.startsWith('/') ? expanded : resolve(ctx.session.workingDirectory, expanded);
+  if (!existsSync(resolved)) {
+    return { reply: `目录不存在: ${resolved}\n请检查路径后重试。`, handled: true };
+  }
+  if (!statSync(resolved).isDirectory()) {
+    return { reply: `这不是一个目录: ${resolved}`, handled: true };
+  }
+  ctx.updateSession({ workingDirectory: resolved });
+  return { reply: `✅ 工作目录已切换为: ${resolved}`, handled: true };
 }
 
 export function handleModel(ctx: CommandContext, args: string): CommandResult {
