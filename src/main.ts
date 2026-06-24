@@ -272,6 +272,8 @@ async function runDaemon(): Promise<void> {
   // -- Message queue for serial processing --
   const messageQueue: WeixinMessage[] = [];
   let processingQueue = false;
+  // 一波忙碌期内只发一次排队提示，避免用户连发消息时被刷屏
+  let queueNoticeSent = false;
 
   async function drainQueue(): Promise<void> {
     if (processingQueue) return;
@@ -281,6 +283,7 @@ async function runDaemon(): Promise<void> {
       await handleMessage(msg, account!, session, sessionStore, sender, config, sharedCtx, activeControllers, messageQueue);
     }
     processingQueue = false;
+    queueNoticeSent = false; // 队列已清空，下一波忙碌可再次提示
   }
 
   // -- Wire the monitor callbacks --
@@ -307,6 +310,16 @@ async function runDaemon(): Promise<void> {
   const callbacks: MonitorCallbacks = {
     onMessage: async (msg: WeixinMessage) => {
       if (handlePriorityCommand(msg)) return;
+      // 已有任务在处理时，新消息会进队列等待——立刻给一个排队反馈，
+      // 避免用户对着空白聊天框干等、误以为消息丢了。一波忙碌期只提示一次。
+      if (processingQueue && !queueNoticeSent && msg.message_type === MessageType.USER && msg.from_user_id) {
+        queueNoticeSent = true;
+        sender.sendText(
+          msg.from_user_id,
+          msg.context_token ?? '',
+          '⏳ 正在处理上一条消息，你后面发的我都收到了，会处理完依次回复。',
+        ).catch(() => {});
+      }
       messageQueue.push(msg);
       drainQueue();
     },
