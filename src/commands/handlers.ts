@@ -63,6 +63,19 @@ export function handleClear(ctx: CommandContext): CommandResult {
   return { reply: '✅ 会话已清除，下次消息将开始新会话。', handled: true };
 }
 
+/**
+ * /stop 空闲时的反馈。
+ * 处理中的 /stop 由 main.ts 的 handlePriorityCommand 提前拦截（abort + 清空队列），
+ * 不会走到这里；走到这里说明当前没有正在跑的任务。
+ */
+export function handleStop(ctx: CommandContext): CommandResult {
+  if (ctx.session.state === 'processing') {
+    // 理论上不可达：留作防御，避免出现"未找到 skill"的误导提示
+    return { reply: '⏹ 正在停止当前任务…', handled: true };
+  }
+  return { reply: 'ℹ️ 当前没有正在进行的任务。', handled: true };
+}
+
 export function handleCwd(ctx: CommandContext, args: string): CommandResult {
   if (!args) {
     return { reply: `当前工作目录: ${ctx.session.workingDirectory}\n用法: /cwd <路径>`, handled: true };
