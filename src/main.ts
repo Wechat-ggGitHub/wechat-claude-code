@@ -27,6 +27,16 @@ import { loadPendingQueue, savePendingQueue, type PendingItem } from './pending-
 
 const MAX_MESSAGE_LENGTH = 4000;
 
+const WELCOME_TEXT = `👋 你好！我是接在你电脑上的 Claude Code。直接在这里发消息，就能让我帮你处理任务——读写文件、跑命令、写代码、分析图片和文档都行。
+
+常用命令：
+/help    查看全部命令
+/status  查看当前会话状态
+/clear   清空上下文、开始新对话
+/stop    停止正在执行的任务
+
+支持文字、语音、图片、文件，发一条试试看吧。`;
+
 // Extensions eligible for auto-push when detected in Claude's response
 const AUTO_PUSH_EXTENSIONS = new Set([
   '.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.svg', '.ico',
@@ -367,6 +377,13 @@ async function handleMessage(
   const userText = extractTextFromItems(msg.item_list);
   const imageItem = extractFirstImageUrl(msg.item_list);
   const fileItem = extractFirstFileItem(msg.item_list);
+
+  // 首次交互：推送一次欢迎/引导，避免新用户面对空白聊天框、不知道能干啥
+  if (!config.welcomed) {
+    config.welcomed = true;
+    saveConfig(config);
+    await sender.sendText(fromUserId, contextToken, WELCOME_TEXT);
+  }
 
   // Drop non-command messages while processing (priority commands already handled upstream)
   if (session.state === 'processing' && !userText.startsWith('/')) {
