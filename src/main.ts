@@ -529,6 +529,18 @@ async function sendToClaude(
       }
     }
 
+    // 图片下载/解析失败：明确告知用户，不要用「请分析这张图片」让 Claude 对着不存在的图瞎猜
+    if (imageItem && !images) {
+      if (userText) {
+        await sender.sendText(fromUserId, contextToken, '⚠️ 图片接收失败，我先按你的文字内容处理；图片可以重发一次。');
+      } else {
+        await sender.sendText(fromUserId, contextToken, '⚠️ 图片接收失败，请重新发送一次。');
+        session.state = 'idle';
+        sessionStore.save(account.accountId, session);
+        return;
+      }
+    }
+
     // Download file if present
     let prompt = userText || '请分析这张图片';
     if (fileItem) {
